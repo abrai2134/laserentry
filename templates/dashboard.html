@@ -1,0 +1,41 @@
+{% extends 'base.html' %}
+{% block body %}
+<form class="filters" method="get">
+  <label>Day <input type="date" name="day" value="{{ day }}" onchange="this.form.submit()"></label>
+  <a class="btn alt" href="{{ url_for('entries', **{'from': day, 'to': day}) }}">See all entries of this day</a>
+</form>
+
+<h2>Cutting right now ({{ running|length }})</h2>
+<div class="tablewrap"><table>
+  <thead><tr><th>Sheet code</th><th>Unit</th><th>Machine</th><th>Operator</th><th>Started</th><th>Running for</th></tr></thead>
+  <tbody>{% for r in running %}
+    <tr><td class="code">{{ r.sheet_code }}</td><td>{{ r.unit_name }}</td><td>{{ r.machine_name }}</td><td>{{ r.operator }}</td>
+      <td>{{ r.cut_start|dt }}</td><td>{{ fmt_minutes(minutes_between(r.cut_start, now_ts)) }}</td></tr>
+  {% else %}<tr><td colspan="6" class="muted">No machine is cutting.</td></tr>{% endfor %}</tbody>
+</table></div>
+
+<h2>Machines on {{ day }}</h2>
+<div class="tablewrap"><table>
+  <thead><tr><th>Unit</th><th>Machine</th><th>Sheets</th><th>Pcs</th><th>Cutting time</th></tr></thead>
+  <tbody>{% for r in by_machine %}
+    <tr><td>{{ r.unit_name }}</td><td>{{ r.machine_name }}</td><td>{{ r.sheets }}</td><td>{{ r.qty }}</td><td>{{ fmt_minutes(r.minutes|round|int) }}</td></tr>
+  {% else %}<tr><td colspan="5" class="muted">No machines yet. Add them in Setup.</td></tr>{% endfor %}</tbody>
+</table></div>
+
+<h2>Operators on {{ day }}</h2>
+<div class="tablewrap"><table>
+  <thead><tr><th>Operator</th><th>Unit</th><th>Sheets</th><th>Pcs</th></tr></thead>
+  <tbody>{% for r in by_operator %}
+    <tr><td>{{ r.full_name }}</td><td>{{ r.unit_name }}</td><td>{{ r.sheets }}</td><td>{{ r.qty }}</td></tr>
+  {% else %}<tr><td colspan="4" class="muted">No entries.</td></tr>{% endfor %}</tbody>
+</table></div>
+
+<h2>Late entries (typed more than 1 hour after cutting)</h2>
+<div class="tablewrap"><table>
+  <thead><tr><th>Sheet code</th><th>Unit</th><th>Operator</th><th>Cut end</th><th>Entered at</th><th>Delay</th></tr></thead>
+  <tbody>{% for r in late %}
+    <tr><td class="code">{{ r.sheet_code }}</td><td>{{ r.unit_name }}</td><td>{{ r.operator }}</td><td>{{ r.cut_end|dt }}</td><td>{{ r.entered_at|dt }}</td>
+      <td><span class="tag late">{{ fmt_minutes(minutes_between(r.cut_end, r.entered_at)) }}</span></td></tr>
+  {% else %}<tr><td colspan="6" class="muted">None.</td></tr>{% endfor %}</tbody>
+</table></div>
+{% endblock %}

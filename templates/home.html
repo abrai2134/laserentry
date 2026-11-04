@@ -1,0 +1,32 @@
+{% extends 'base.html' %}
+{% block body %}
+<div class="actions">
+  <a class="btn big start" href="{{ url_for('new_entry', mode='live') }}">▶ START CUTTING A SHEET</a>
+  <a class="btn big alt" href="{{ url_for('new_entry', mode='manual') }}">✎ Enter a sheet already cut</a>
+</div>
+<p class="muted">Today: <b>{{ today_count[0] }}</b> sheets, <b>{{ today_count[1] }}</b> pcs</p>
+
+{% if running %}
+<h2>Cutting now</h2>
+{% for e in running %}
+<div class="card running">
+  <div class="code">{{ e.sheet_code }}</div>
+  <div class="muted">{{ e.material }} · {{ e.thickness }} · {{ e.machine_name }} · qty {{ e.qty }}</div>
+  <div>Started: <b>{{ e.cut_start|dt }}</b></div>
+  <div class="row">
+    <form method="post" action="{{ url_for('finish_entry', eid=e.id) }}">
+      <input type="hidden" name="csrf" value="{{ csrf_token }}">
+      <button class="btn big finish">■ FINISH</button>
+    </form>
+    <form method="post" action="{{ url_for('cancel_entry', eid=e.id) }}" onsubmit="return confirm('Cancel this entry? It will be deleted.')">
+      <input type="hidden" name="csrf" value="{{ csrf_token }}">
+      <button class="btn danger">Cancel</button>
+    </form>
+  </div>
+</div>
+{% endfor %}
+{% endif %}
+
+<h2>My last entries</h2>
+{% include '_table.html' with context %}
+{% endblock %}

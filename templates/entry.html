@@ -1,0 +1,70 @@
+{% extends 'base.html' %}
+{% block body %}
+<div class="tabs">
+  <a class="{{ 'on' if mode == 'live' }}" href="{{ url_for('new_entry', mode='live') }}">▶ Start cutting now</a>
+  <a class="{{ 'on' if mode == 'manual' }}" href="{{ url_for('new_entry', mode='manual') }}">✎ Already cut</a>
+</div>
+{% if not machines %}
+  <div class="flash error">No machine is set up for your unit. Ask admin to add machines.</div>
+{% else %}
+<form class="card" method="post" id="f">
+  <input type="hidden" name="csrf" value="{{ csrf_token }}">
+  <input type="hidden" name="mode" value="{{ mode }}">
+  <p class="muted">
+    {% if mode == 'live' %}Cut start time is taken automatically when you press START. Press FINISH on the home page when the sheet is done.
+    {% else %}Enter when the sheet was cut. The time you save this entry is recorded automatically.{% endif %}
+  </p>
+
+  <label>Machine
+    <select name="machine_id" id="machine" required>
+      {% if machines|length > 1 %}<option value="">-- select --</option>{% endif %}
+      {% for m in machines %}
+        <option value="{{ m.id }}" data-name="{{ m.name }}" {{ 'selected' if form.machine_id == m.id|string }}>
+          {% if me.role == 'admin' or not me.unit_id %}{{ m.unit_name }} / {% endif %}{{ m.name }}</option>
+      {% endfor %}
+    </select>
+  </label>
+
+  <label>Material</label>
+  <div class="chips">
+    {% for mt in materials %}
+      <label class="chip"><input type="radio" name="material" value="{{ mt }}" required {{ 'checked' if form.material == mt }}><span>{{ mt }}</span></label>
+    {% endfor %}
+  </div>
+
+  <label>Thickness
+    <input name="thickness" id="thickness" list="thk" placeholder="16G" value="{{ form.thickness or '' }}" required autocapitalize="characters">
+    <datalist id="thk">{% for t in thicknesses %}<option value="{{ t }}">{% endfor %}</datalist>
+  </label>
+
+  <label>Sheet name
+    <input name="sheet_name" id="sheet" placeholder="e.g. PANEL-A" value="{{ form.sheet_name or '' }}" required autocapitalize="characters">
+  </label>
+
+  <label>Quantity (pcs / sheets)
+    <input name="qty" type="number" min="1" value="{{ form.qty or 1 }}" inputmode="numeric">
+  </label>
+
+  {% if mode == 'manual' %}
+  <div class="grid2">
+    <label>Cut start <input type="datetime-local" name="cut_start" value="{{ form.cut_start or '' }}" max="{{ now_local }}" required></label>
+    <label>Cut end <input type="datetime-local" name="cut_end" value="{{ form.cut_end or now_local }}" max="{{ now_local }}" required></label>
+  </div>
+  {% endif %}
+
+  <label>Remarks (optional) <input name="remarks" value="{{ form.remarks or '' }}"></label>
+
+  <div class="preview">Sheet code: <b id="code">-</b></div>
+  <button class="btn big {{ 'start' if mode == 'live' }}">{{ '▶ START' if mode == 'live' else 'SAVE ENTRY' }}</button>
+</form>
+<script>
+  const clean = s => (s || '').toUpperCase().replace(/[^A-Z0-9.\-_]/g, '');
+  function upd() {
+    const m = document.getElementById('machine'), o = m.options[m.selectedIndex];
+    const code = clean(document.getElementById('thickness').value) + clean(o && o.dataset.name) + clean(document.getElementById('sheet').value);
+    document.getElementById('code').textContent = code || '-';
+  }
+  document.getElementById('f').addEventListener('input', upd); upd();
+</script>
+{% endif %}
+{% endblock %}

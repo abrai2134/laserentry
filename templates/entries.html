@@ -1,0 +1,19 @@
+{% extends 'base.html' %}
+{% block body %}
+<form class="filters" method="get">
+  <label>From <input type="date" name="from" value="{{ args.get('from','') }}"></label>
+  <label>To <input type="date" name="to" value="{{ args.get('to','') }}"></label>
+  {% if me.role == 'admin' %}
+  <label>Unit <select name="unit"><option value="">All</option>{% for u in units %}<option value="{{ u.id }}" {{ 'selected' if args.get('unit') == u.id|string }}>{{ u.name }}</option>{% endfor %}</select></label>
+  <label>Machine <select name="machine"><option value="">All</option>{% for m in machines %}<option value="{{ m.id }}" {{ 'selected' if args.get('machine') == m.id|string }}>{{ m.unit_name }} / {{ m.name }}</option>{% endfor %}</select></label>
+  <label>Operator <select name="user"><option value="">All</option>{% for u in users %}<option value="{{ u.id }}" {{ 'selected' if args.get('user') == u.id|string }}>{{ u.full_name }}</option>{% endfor %}</select></label>
+  {% endif %}
+  <label>Material <select name="material"><option value="">All</option>{% for m in materials %}<option {{ 'selected' if args.get('material') == m }}>{{ m }}</option>{% endfor %}</select></label>
+  <label>Thickness <input name="thickness" value="{{ args.get('thickness','') }}" size="5"></label>
+  <label>Search <input name="q" value="{{ args.get('q','') }}" placeholder="sheet code"></label>
+  <button class="btn">Show</button>
+  <a class="btn alt" href="{{ url_for('entries_csv', **args) }}">Download Excel (CSV)</a>
+</form>
+<p class="muted">{{ totals.sheets }} entries · {{ totals.qty }} pcs · total cutting {{ fmt_minutes(totals.minutes) }}</p>
+{% include '_table.html' with context %}
+{% endblock %}

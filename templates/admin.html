@@ -1,0 +1,50 @@
+{% extends 'base.html' %}
+{% block body %}
+{% macro csrf() %}<input type="hidden" name="csrf" value="{{ csrf_token }}">{% endmacro %}
+<div class="grid2">
+  <div class="card">
+    <h2>Units</h2>
+    <form method="post" class="row">{{ csrf() }}<input type="hidden" name="action" value="add_unit">
+      <input name="name" placeholder="e.g. UNIT1 / BHIWANDI" required><button class="btn">Add unit</button></form>
+    <ul>{% for u in units %}<li>{{ u.name }}</li>{% else %}<li class="muted">No units yet.</li>{% endfor %}</ul>
+  </div>
+  <div class="card">
+    <h2>Machines</h2>
+    {% if units %}
+    <form method="post" class="row">{{ csrf() }}<input type="hidden" name="action" value="add_machine">
+      <select name="unit_id" required>{% for u in units %}<option value="{{ u.id }}">{{ u.name }}</option>{% endfor %}</select>
+      <input name="name" placeholder="e.g. LASER1" required><button class="btn">Add machine</button></form>
+    {% else %}<p class="muted">Add a unit first.</p>{% endif %}
+    <ul>{% for m in machines %}<li>{{ m.unit_name }} / <b>{{ m.name }}</b> {% if not m.active %}<span class="tag late">off</span>{% endif %}
+      <form method="post" class="inline">{{ csrf() }}<input type="hidden" name="action" value="toggle_machine"><input type="hidden" name="id" value="{{ m.id }}">
+        <button class="link">{{ 'disable' if m.active else 'enable' }}</button></form></li>
+    {% else %}<li class="muted">No machines yet.</li>{% endfor %}</ul>
+    <p class="muted small">Machine name is used inside the sheet code, so keep it short (no spaces).</p>
+  </div>
+</div>
+
+<div class="card">
+  <h2>Users / Operators</h2>
+  <form method="post" class="row wrap">{{ csrf() }}<input type="hidden" name="action" value="add_user">
+    <input name="full_name" placeholder="Full name" required>
+    <input name="username" placeholder="Login username" required autocapitalize="none">
+    <input name="password" placeholder="Password" required minlength="4">
+    <select name="unit_id"><option value="">All units</option>{% for u in units %}<option value="{{ u.id }}">{{ u.name }}</option>{% endfor %}</select>
+    <select name="role"><option value="operator">Operator</option><option value="admin">Admin</option></select>
+    <button class="btn">Add user</button>
+  </form>
+  <div class="tablewrap"><table>
+    <thead><tr><th>Name</th><th>Username</th><th>Role</th><th>Unit</th><th>Status</th><th>Reset password</th></tr></thead>
+    <tbody>{% for u in users %}
+      <tr>
+        <td>{{ u.full_name }}</td><td>{{ u.username }}</td><td>{{ u.role }}</td>
+        <td><form method="post" class="inline">{{ csrf() }}<input type="hidden" name="action" value="set_user_unit"><input type="hidden" name="id" value="{{ u.id }}">
+          <select name="unit_id" onchange="this.form.submit()"><option value="">All units</option>{% for un in units %}<option value="{{ un.id }}" {{ 'selected' if u.unit_id == un.id }}>{{ un.name }}</option>{% endfor %}</select></form></td>
+        <td><form method="post" class="inline">{{ csrf() }}<input type="hidden" name="action" value="toggle_user"><input type="hidden" name="id" value="{{ u.id }}">
+          {% if u.active %}<span class="tag ok">active</span>{% else %}<span class="tag late">disabled</span>{% endif %} <button class="link">{{ 'disable' if u.active else 'enable' }}</button></form></td>
+        <td><form method="post" class="inline">{{ csrf() }}<input type="hidden" name="action" value="reset_password"><input type="hidden" name="id" value="{{ u.id }}">
+          <input name="password" placeholder="new password" minlength="4" size="10" required><button class="link">set</button></form></td>
+      </tr>{% endfor %}</tbody>
+  </table></div>
+</div>
+{% endblock %}

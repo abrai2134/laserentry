@@ -1,0 +1,32 @@
+{% set rows = rows if rows is defined else recent %}
+<div class="tablewrap">
+<table>
+  <thead><tr>
+    <th>Sheet code</th>{% if me.role == 'admin' %}<th>Unit</th><th>Operator</th>{% endif %}
+    <th>Machine</th><th>Mat.</th><th>Thk</th><th>Qty</th>
+    <th>Cut start</th><th>Cut end</th><th>Cut time</th><th>Entered at</th><th>Entry delay</th>
+    {% if me.role == 'admin' %}<th></th>{% endif %}
+  </tr></thead>
+  <tbody>
+  {% for r in rows %}
+    {% set delay = minutes_between(r.cut_end, r.entered_at) if r.mode == 'manual' else 0 %}
+    <tr>
+      <td class="code">{{ r.sheet_code }}{% if r.remarks %}<div class="muted small">{{ r.remarks }}</div>{% endif %}</td>
+      {% if me.role == 'admin' %}<td>{{ r.unit_name }}</td><td>{{ r.operator }}</td>{% endif %}
+      <td>{{ r.machine_name }}</td><td>{{ r.material }}</td><td>{{ r.thickness }}</td><td>{{ r.qty }}</td>
+      <td>{{ r.cut_start|dt }}</td>
+      <td>{% if r.cut_end %}{{ r.cut_end|dt }}{% else %}<span class="tag run">running</span>{% endif %}</td>
+      <td>{{ fmt_minutes(minutes_between(r.cut_start, r.cut_end)) }}</td>
+      <td>{{ r.entered_at|dt }}</td>
+      <td>{% if r.mode == 'live' %}<span class="tag ok">live</span>{% elif delay is not none and delay > 60 %}<span class="tag late">{{ fmt_minutes(delay) }}</span>{% else %}{{ fmt_minutes(delay) }}{% endif %}</td>
+      {% if me.role == 'admin' %}<td>
+        <form method="post" action="{{ url_for('cancel_entry', eid=r.id) }}" onsubmit="return confirm('Delete {{ r.sheet_code }}?')">
+          <input type="hidden" name="csrf" value="{{ csrf_token }}"><button class="link danger">delete</button>
+        </form></td>{% endif %}
+    </tr>
+  {% else %}
+    <tr><td colspan="14" class="muted">No entries.</td></tr>
+  {% endfor %}
+  </tbody>
+</table>
+</div>

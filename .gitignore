@@ -1,0 +1,4 @@
+laserentry.db
+secret.key
+__pycache__/
+*.pyc

@@ -1,0 +1,583 @@
+"""Laser Entry - sheet cutting log for multiple units and laser machines.
+
+Operators log in and record each sheet they cut. Every entry keeps two times:
+  * cut time   - when the sheet was actually cut (start / end)
+  * entry time - when the operator saved the record (set by the server, cannot be changed)
+
+Run:  python app.py      (then open http://<this-pc-ip>:5000)
+"""
+import csv
+import io
+import os
+import re
+import secrets
+import sqlite3
+from datetime import datetime, timedelta
+from functools import wraps
+from zoneinfo import ZoneInfo
+
+from flask import (Flask, Response, abort, flash, g, redirect, render_template,
+                   request, session, url_for)
+from werkzeug.security import check_password_hash, generate_password_hash
+
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+DB_PATH = os.environ.get("LASER_DB", os.path.join(BASE_DIR, "laserentry.db"))
+TZ = ZoneInfo(os.environ.get("LASER_TZ", "Asia/Kolkata"))
+TS_FMT = "%Y-%m-%d %H:%M:%S"
+
+MATERIALS = ["MS", "SS", "AL", "GI", "CRCA", "HR", "BRASS", "COPPER"]
+THICKNESS_SUGGESTIONS = ["10G", "12G", "14G", "16G", "18G", "20G", "22G", "24G",
+                         "1MM", "1.5MM", "2MM", "3MM", "4MM", "5MM", "6MM", "8MM", "10MM"]
+
+app = Flask(__name__)
+
+
+def _secret_key():
+    """Keep one key on disk so operators stay logged in after a restart."""
+    if os.environ.get("LASER_SECRET"):
+        return os.environ["LASER_SECRET"]
+    path = os.path.join(BASE_DIR, "secret.key")
+    if not os.path.exists(path):
+        with open(path, "w") as fh:
+            fh.write(secrets.token_hex(32))
+    with open(path) as fh:
+        return fh.read().strip()
+
+
+app.config["SECRET_KEY"] = _secret_key()
+app.config["PERMANENT_SESSION_LIFETIME"] = timedelta(hours=14)
+
+
+# ---------------------------------------------------------------- database
+SCHEMA = """
+CREATE TABLE IF NOT EXISTS units (
+    id INTEGER PRIMARY KEY,
+    name TEXT NOT NULL UNIQUE
+);
+CREATE TABLE IF NOT EXISTS machines (
+    id INTEGER PRIMARY KEY,
+    name TEXT NOT NULL,
+    unit_id INTEGER NOT NULL REFERENCES units(id),
+    active INTEGER NOT NULL DEFAULT 1,
+    UNIQUE(name, unit_id)
+);
+CREATE TABLE IF NOT EXISTS users (
+    id INTEGER PRIMARY KEY,
+    username TEXT NOT NULL UNIQUE,
+    full_name TEXT NOT NULL,
+    password_hash TEXT NOT NULL,
+    role TEXT NOT NULL CHECK(role IN ('admin', 'operator')),
+    unit_id INTEGER REFERENCES units(id),
+    active INTEGER NOT NULL DEFAULT 1
+);
+CREATE TABLE IF NOT EXISTS entries (
+    id INTEGER PRIMARY KEY,
+    user_id INTEGER NOT NULL REFERENCES users(id),
+    unit_id INTEGER NOT NULL REFERENCES units(id),
+    machine_id INTEGER NOT NULL REFERENCES machines(id),
+    material TEXT NOT NULL,
+    thickness TEXT NOT NULL,
+    sheet_name TEXT NOT NULL,
+    sheet_code TEXT NOT NULL,
+    qty INTEGER NOT NULL DEFAULT 1,
+    remarks TEXT,
+    mode TEXT NOT NULL CHECK(mode IN ('live', 'manual')),
+    cut_start TEXT NOT NULL,
+    cut_end TEXT,
+    entered_at TEXT NOT NULL,
+    finished_at TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_entries_start ON entries(cut_start);
+CREATE INDEX IF NOT EXISTS idx_entries_user ON entries(user_id);
+"""
+
+
+def get_db():
+    if "db" not in g:
+        g.db = sqlite3.connect(DB_PATH)
+        g.db.row_factory = sqlite3.Row
+        g.db.execute("PRAGMA foreign_keys = ON")
+    return g.db
+
+
+@app.teardown_appcontext
+def close_db(_exc):
+    db = g.pop("db", None)
+    if db is not None:
+        db.close()
+
+
+def init_db():
+    db = sqlite3.connect(DB_PATH)
+    db.executescript(SCHEMA)
+    if not db.execute("SELECT 1 FROM users WHERE role='admin'").fetchone():
+        db.execute(
+            "INSERT INTO users(username, full_name, password_hash, role) VALUES (?,?,?,?)",
+            ("admin", "Administrator", generate_password_hash("admin123"), "admin"))
+        print("Created default login  ->  username: admin   password: admin123  (change it!)")
+    db.commit()
+    db.close()
+
+
+# ---------------------------------------------------------------- helpers
+def now():
+    return datetime.now(TZ).replace(tzinfo=None)
+
+
+def now_str():
+    return now().strftime(TS_FMT)
+
+
+def parse_dt(value):
+    """Parse a value from an <input type=datetime-local>."""
+    for fmt in ("%Y-%m-%dT%H:%M", "%Y-%m-%dT%H:%M:%S", TS_FMT, "%Y-%m-%d %H:%M"):
+        try:
+            return datetime.strptime(value.strip(), fmt)
+        except (ValueError, AttributeError):
+            continue
+    return None
+
+
+def clean_code(text):
+    return re.sub(r"[^A-Z0-9.\-_]", "", (text or "").upper())
+
+
+def make_sheet_code(thickness, machine_name, sheet_name):
+    """16G + MACHINENAME + SHEETNAME, e.g. 16GLASER1PANELA."""
+    return clean_code(thickness) + clean_code(machine_name) + clean_code(sheet_name)
+
+
+def minutes_between(a, b):
+    if not a or not b:
+        return None
+    return round((datetime.strptime(b, TS_FMT) - datetime.strptime(a, TS_FMT)).total_seconds() / 60)
+
+
+def fmt_minutes(m):
+    if m is None:
+        return "-"
+    sign = "-" if m < 0 else ""
+    m = abs(m)
+    if m < 60:
+        return f"{sign}{m} min"
+    if m < 60 * 24:
+        return f"{sign}{m // 60}h {m % 60}m"
+    return f"{sign}{m // 1440}d {(m % 1440) // 60}h"
+
+
+app.jinja_env.globals.update(fmt_minutes=fmt_minutes, minutes_between=minutes_between)
+
+
+@app.template_filter("dt")
+def dt_filter(value):
+    if not value:
+        return "-"
+    d = datetime.strptime(value, TS_FMT)
+    return d.strftime("%d-%m-%Y %I:%M %p")
+
+
+def current_user():
+    uid = session.get("uid")
+    if not uid:
+        return None
+    if "user" not in g:
+        g.user = get_db().execute(
+            "SELECT u.*, un.name AS unit_name FROM users u LEFT JOIN units un ON un.id=u.unit_id "
+            "WHERE u.id=? AND u.active=1", (uid,)).fetchone()
+    return g.user
+
+
+@app.context_processor
+def inject_user():
+    return {"me": current_user(), "csrf_token": csrf_token()}
+
+
+def login_required(view):
+    @wraps(view)
+    def wrapper(*a, **kw):
+        if not current_user():
+            session.clear()
+            return redirect(url_for("login", next=request.path))
+        return view(*a, **kw)
+    return wrapper
+
+
+def admin_required(view):
+    @wraps(view)
+    @login_required
+    def wrapper(*a, **kw):
+        if current_user()["role"] != "admin":
+            abort(403)
+        return view(*a, **kw)
+    return wrapper
+
+
+def csrf_token():
+    if "csrf" not in session:
+        session["csrf"] = secrets.token_hex(16)
+    return session["csrf"]
+
+
+@app.before_request
+def check_csrf():
+    if request.method == "POST":
+        if request.form.get("csrf") != session.get("csrf"):
+            abort(400, "Form expired - go back, refresh the page and try again.")
+
+
+# ---------------------------------------------------------------- auth
+@app.route("/login", methods=["GET", "POST"])
+def login():
+    if request.method == "POST":
+        username = request.form.get("username", "").strip().lower()
+        user = get_db().execute("SELECT * FROM users WHERE username=? AND active=1",
+                                (username,)).fetchone()
+        if user and check_password_hash(user["password_hash"], request.form.get("password", "")):
+            csrf = session.get("csrf")
+            session.clear()
+            session.permanent = True
+            session["uid"] = user["id"]
+            session["csrf"] = csrf or secrets.token_hex(16)
+            nxt = request.args.get("next", "")
+            return redirect(nxt if nxt.startswith("/") and not nxt.startswith("//") else url_for("home"))
+        flash("Wrong username or password.", "error")
+    return render_template("login.html")
+
+
+@app.route("/logout")
+def logout():
+    session.clear()
+    return redirect(url_for("login"))
+
+
+@app.route("/password", methods=["GET", "POST"])
+@login_required
+def change_password():
+    if request.method == "POST":
+        me = current_user()
+        if not check_password_hash(me["password_hash"], request.form.get("old", "")):
+            flash("Current password is wrong.", "error")
+        elif len(request.form.get("new", "")) < 4:
+            flash("New password must be at least 4 characters.", "error")
+        elif request.form.get("new") != request.form.get("new2"):
+            flash("New passwords do not match.", "error")
+        else:
+            db = get_db()
+            db.execute("UPDATE users SET password_hash=? WHERE id=?",
+                       (generate_password_hash(request.form["new"]), me["id"]))
+            db.commit()
+            flash("Password changed.", "ok")
+            return redirect(url_for("home"))
+    return render_template("password.html")
+
+
+# ---------------------------------------------------------------- operator pages
+@app.route("/")
+@login_required
+def home():
+    me = current_user()
+    if me["role"] == "admin":
+        return redirect(url_for("dashboard"))
+    db = get_db()
+    running = db.execute(
+        "SELECT e.*, m.name AS machine_name FROM entries e JOIN machines m ON m.id=e.machine_id "
+        "WHERE e.user_id=? AND e.cut_end IS NULL ORDER BY e.cut_start", (me["id"],)).fetchall()
+    today = now().strftime("%Y-%m-%d")
+    recent = db.execute(
+        "SELECT e.*, m.name AS machine_name FROM entries e JOIN machines m ON m.id=e.machine_id "
+        "WHERE e.user_id=? AND e.cut_end IS NOT NULL ORDER BY e.entered_at DESC LIMIT 20",
+        (me["id"],)).fetchall()
+    today_count = db.execute(
+        "SELECT COUNT(*), COALESCE(SUM(qty),0) FROM entries WHERE user_id=? AND substr(cut_start,1,10)=?",
+        (me["id"], today)).fetchone()
+    return render_template("home.html", running=running, recent=recent, today_count=today_count)
+
+
+def machines_for(user):
+    db = get_db()
+    if user["role"] == "admin" or not user["unit_id"]:
+        return db.execute("SELECT m.*, u.name AS unit_name FROM machines m JOIN units u ON u.id=m.unit_id "
+                          "WHERE m.active=1 ORDER BY u.name, m.name").fetchall()
+    return db.execute("SELECT m.*, u.name AS unit_name FROM machines m JOIN units u ON u.id=m.unit_id "
+                      "WHERE m.active=1 AND m.unit_id=? ORDER BY m.name", (user["unit_id"],)).fetchall()
+
+
+@app.route("/entry/new", methods=["GET", "POST"])
+@login_required
+def new_entry():
+    me = current_user()
+    machines = machines_for(me)
+    mode = request.values.get("mode", "live")
+    if mode not in ("live", "manual"):
+        mode = "live"
+
+    if request.method == "POST":
+        f = request.form
+        errors = []
+        machine = next((m for m in machines if str(m["id"]) == f.get("machine_id")), None)
+        material = f.get("material", "").strip().upper()
+        thickness = clean_code(f.get("thickness"))
+        sheet_name = f.get("sheet_name", "").strip()
+        try:
+            qty = int(f.get("qty") or 1)
+            if qty < 1:
+                raise ValueError
+        except ValueError:
+            qty = None
+            errors.append("Quantity must be a whole number, 1 or more.")
+        if not machine:
+            errors.append("Select a machine.")
+        if not material:
+            errors.append("Select material.")
+        if not thickness:
+            errors.append("Enter thickness (e.g. 16G).")
+        if not clean_code(sheet_name):
+            errors.append("Enter sheet name.")
+
+        entered = now_str()
+        cut_start = cut_end = None
+        if mode == "live":
+            cut_start = entered        # cutting starts now, operator presses Finish later
+        else:
+            s, e = parse_dt(f.get("cut_start")), parse_dt(f.get("cut_end"))
+            if not s or not e:
+                errors.append("Enter cut start and cut end time.")
+            elif e < s:
+                errors.append("Cut end cannot be before cut start.")
+            elif e > now() + timedelta(minutes=5):
+                errors.append("Cut end cannot be in the future.")
+            else:
+                cut_start, cut_end = s.strftime(TS_FMT), e.strftime(TS_FMT)
+
+        if errors:
+            for msg in errors:
+                flash(msg, "error")
+        else:
+            code = make_sheet_code(thickness, machine["name"], sheet_name)
+            db = get_db()
+            db.execute(
+                "INSERT INTO entries(user_id, unit_id, machine_id, material, thickness, sheet_name, "
+                "sheet_code, qty, remarks, mode, cut_start, cut_end, entered_at, finished_at) "
+                "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                (me["id"], machine["unit_id"], machine["id"], material, thickness, sheet_name.upper(),
+                 code, qty, f.get("remarks", "").strip(), mode, cut_start, cut_end, entered,
+                 entered if mode == "manual" else None))
+            db.commit()
+            flash(f"Saved {code}" + (" - cutting started. Press FINISH when done." if mode == "live" else ""), "ok")
+            return redirect(url_for("home"))
+
+    return render_template("entry.html", machines=machines, mode=mode, materials=MATERIALS,
+                           thicknesses=THICKNESS_SUGGESTIONS, form=request.form,
+                           now_local=now().strftime("%Y-%m-%dT%H:%M"))
+
+
+@app.route("/entry/<int:eid>/finish", methods=["POST"])
+@login_required
+def finish_entry(eid):
+    me = current_user()
+    db = get_db()
+    e = db.execute("SELECT * FROM entries WHERE id=?", (eid,)).fetchone()
+    if not e or (e["user_id"] != me["id"] and me["role"] != "admin"):
+        abort(404)
+    if e["cut_end"] is None:
+        t = now_str()
+        db.execute("UPDATE entries SET cut_end=?, finished_at=? WHERE id=?", (t, t, eid))
+        db.commit()
+        flash(f"{e['sheet_code']} finished.", "ok")
+    return redirect(request.referrer or url_for("home"))
+
+
+@app.route("/entry/<int:eid>/cancel", methods=["POST"])
+@login_required
+def cancel_entry(eid):
+    """Operator may cancel a running cut started by mistake; admin may delete any entry."""
+    me = current_user()
+    db = get_db()
+    e = db.execute("SELECT * FROM entries WHERE id=?", (eid,)).fetchone()
+    if not e:
+        abort(404)
+    allowed = me["role"] == "admin" or (e["user_id"] == me["id"] and e["cut_end"] is None)
+    if not allowed:
+        abort(403)
+    db.execute("DELETE FROM entries WHERE id=?", (eid,))
+    db.commit()
+    flash(f"Deleted {e['sheet_code']}.", "ok")
+    return redirect(request.referrer or url_for("home"))
+
+
+# ---------------------------------------------------------------- reports
+def query_entries(args, me, limit=None):
+    sql = ("SELECT e.*, m.name AS machine_name, un.name AS unit_name, us.full_name AS operator, "
+           "us.username FROM entries e JOIN machines m ON m.id=e.machine_id "
+           "JOIN units un ON un.id=e.unit_id JOIN users us ON us.id=e.user_id WHERE 1=1")
+    params = []
+    if me["role"] != "admin":
+        sql += " AND e.user_id=?"
+        params.append(me["id"])
+    if args.get("from"):
+        sql += " AND substr(e.cut_start,1,10) >= ?"
+        params.append(args["from"])
+    if args.get("to"):
+        sql += " AND substr(e.cut_start,1,10) <= ?"
+        params.append(args["to"])
+    for key, col in (("unit", "e.unit_id"), ("machine", "e.machine_id"), ("user", "e.user_id")):
+        if args.get(key):
+            sql += f" AND {col}=?"
+            params.append(args[key])
+    if args.get("material"):
+        sql += " AND e.material=?"
+        params.append(args["material"])
+    if args.get("thickness"):
+        sql += " AND e.thickness=?"
+        params.append(clean_code(args["thickness"]))
+    if args.get("q"):
+        sql += " AND (e.sheet_code LIKE ? OR e.sheet_name LIKE ? OR e.remarks LIKE ?)"
+        params += [f"%{args['q']}%"] * 3
+    sql += " ORDER BY e.cut_start DESC"
+    if limit:
+        sql += f" LIMIT {int(limit)}"
+    return get_db().execute(sql, params).fetchall()
+
+
+def default_range(args):
+    args = dict(args)
+    if not args.get("from") and not args.get("to"):
+        args["from"] = args["to"] = now().strftime("%Y-%m-%d")
+    return args
+
+
+@app.route("/entries")
+@login_required
+def entries():
+    me = current_user()
+    args = default_range(request.args)
+    rows = query_entries(args, me, limit=2000)
+    db = get_db()
+    totals = {"sheets": len(rows), "qty": sum(r["qty"] for r in rows),
+              "minutes": sum(minutes_between(r["cut_start"], r["cut_end"]) or 0 for r in rows)}
+    return render_template(
+        "entries.html", rows=rows, args=args, totals=totals, materials=MATERIALS,
+        units=db.execute("SELECT * FROM units ORDER BY name").fetchall(),
+        machines=db.execute("SELECT m.*, u.name AS unit_name FROM machines m JOIN units u ON u.id=m.unit_id "
+                            "ORDER BY u.name, m.name").fetchall(),
+        users=db.execute("SELECT * FROM users WHERE role='operator' ORDER BY full_name").fetchall())
+
+
+def _blank(v):
+    return "" if v is None else v
+
+
+@app.route("/entries.csv")
+@login_required
+def entries_csv():
+    rows = query_entries(default_range(request.args), current_user())
+    out = io.StringIO()
+    w = csv.writer(out)
+    w.writerow(["ID", "Sheet Code", "Unit", "Machine", "Material", "Thickness", "Sheet Name", "Qty",
+                "Operator", "Cut Start", "Cut End", "Cut Minutes", "Entered At",
+                "Entry Delay (min)", "Mode", "Remarks"])
+    for r in rows:
+        w.writerow([r["id"], r["sheet_code"], r["unit_name"], r["machine_name"], r["material"],
+                    r["thickness"], r["sheet_name"], r["qty"], r["operator"], r["cut_start"],
+                    r["cut_end"] or "", _blank(minutes_between(r["cut_start"], r["cut_end"])),
+                    r["entered_at"], minutes_between(r["cut_end"], r["entered_at"]) if r["mode"] == "manual" else 0,
+                    "Live (Start/Finish)" if r["mode"] == "live" else "Manual (typed later)",
+                    r["remarks"] or ""])
+    name = f"laser_entries_{now().strftime('%Y%m%d_%H%M')}.csv"
+    return Response("﻿" + out.getvalue(), mimetype="text/csv",
+                    headers={"Content-Disposition": f"attachment; filename={name}"})
+
+
+@app.route("/dashboard")
+@admin_required
+def dashboard():
+    db = get_db()
+    day = request.args.get("day") or now().strftime("%Y-%m-%d")
+    by_machine = db.execute(
+        "SELECT un.name AS unit_name, m.name AS machine_name, COUNT(e.id) AS sheets, "
+        "COALESCE(SUM(e.qty),0) AS qty, "
+        "COALESCE(SUM((julianday(e.cut_end)-julianday(e.cut_start))*1440),0) AS minutes "
+        "FROM machines m JOIN units un ON un.id=m.unit_id "
+        "LEFT JOIN entries e ON e.machine_id=m.id AND substr(e.cut_start,1,10)=? "
+        "WHERE m.active=1 GROUP BY m.id ORDER BY un.name, m.name", (day,)).fetchall()
+    by_operator = db.execute(
+        "SELECT us.full_name, un.name AS unit_name, COUNT(e.id) AS sheets, COALESCE(SUM(e.qty),0) AS qty "
+        "FROM entries e JOIN users us ON us.id=e.user_id JOIN units un ON un.id=e.unit_id "
+        "WHERE substr(e.cut_start,1,10)=? GROUP BY us.id ORDER BY sheets DESC", (day,)).fetchall()
+    running = db.execute(
+        "SELECT e.*, m.name AS machine_name, un.name AS unit_name, us.full_name AS operator "
+        "FROM entries e JOIN machines m ON m.id=e.machine_id JOIN units un ON un.id=e.unit_id "
+        "JOIN users us ON us.id=e.user_id WHERE e.cut_end IS NULL ORDER BY e.cut_start").fetchall()
+    late = db.execute(
+        "SELECT e.*, m.name AS machine_name, un.name AS unit_name, us.full_name AS operator "
+        "FROM entries e JOIN machines m ON m.id=e.machine_id JOIN units un ON un.id=e.unit_id "
+        "JOIN users us ON us.id=e.user_id WHERE e.mode='manual' AND substr(e.cut_start,1,10)=? "
+        "AND (julianday(e.entered_at)-julianday(e.cut_end))*1440 > 60 "
+        "ORDER BY e.entered_at DESC", (day,)).fetchall()
+    return render_template("dashboard.html", day=day, by_machine=by_machine,
+                           by_operator=by_operator, running=running, late=late,
+                           now_ts=now_str())
+
+
+# ---------------------------------------------------------------- admin setup
+@app.route("/admin", methods=["GET", "POST"])
+@admin_required
+def admin():
+    db = get_db()
+    if request.method == "POST":
+        f = request.form
+        action = f.get("action")
+        try:
+            if action == "add_unit" and f.get("name", "").strip():
+                db.execute("INSERT INTO units(name) VALUES (?)", (f["name"].strip().upper(),))
+                flash("Unit added.", "ok")
+            elif action == "add_machine" and clean_code(f.get("name")) and f.get("unit_id"):
+                db.execute("INSERT INTO machines(name, unit_id) VALUES (?,?)",
+                           (clean_code(f["name"]), f["unit_id"]))
+                flash("Machine added.", "ok")
+            elif action == "toggle_machine":
+                db.execute("UPDATE machines SET active=1-active WHERE id=?", (f["id"],))
+            elif action == "add_user":
+                username = re.sub(r"\s+", "", f.get("username", "").lower())
+                if not username or not f.get("full_name", "").strip() or len(f.get("password", "")) < 4:
+                    flash("Username, name and password (min 4 chars) are required.", "error")
+                else:
+                    role = "admin" if f.get("role") == "admin" else "operator"
+                    db.execute("INSERT INTO users(username, full_name, password_hash, role, unit_id) "
+                               "VALUES (?,?,?,?,?)",
+                               (username, f["full_name"].strip(), generate_password_hash(f["password"]),
+                                role, f.get("unit_id") or None))
+                    flash(f"User {username} created.", "ok")
+            elif action == "reset_password" and len(f.get("password", "")) >= 4:
+                db.execute("UPDATE users SET password_hash=? WHERE id=?",
+                           (generate_password_hash(f["password"]), f["id"]))
+                flash("Password reset.", "ok")
+            elif action == "toggle_user":
+                if int(f["id"]) == current_user()["id"]:
+                    flash("You cannot disable yourself.", "error")
+                else:
+                    db.execute("UPDATE users SET active=1-active WHERE id=?", (f["id"],))
+            elif action == "set_user_unit":
+                db.execute("UPDATE users SET unit_id=? WHERE id=?", (f.get("unit_id") or None, f["id"]))
+                flash("Unit updated.", "ok")
+            db.commit()
+        except sqlite3.IntegrityError:
+            flash("That name already exists.", "error")
+        return redirect(url_for("admin"))
+    units = db.execute("SELECT * FROM units ORDER BY name").fetchall()
+    machines = db.execute("SELECT m.*, u.name AS unit_name FROM machines m JOIN units u ON u.id=m.unit_id "
+                          "ORDER BY u.name, m.name").fetchall()
+    users = db.execute("SELECT us.*, un.name AS unit_name FROM users us LEFT JOIN units un "
+                       "ON un.id=us.unit_id ORDER BY us.role, us.full_name").fetchall()
+    return render_template("admin.html", units=units, machines=machines, users=users)
+
+
+@app.errorhandler(403)
+def forbidden(_e):
+    return render_template("message.html", text="You do not have access to this page."), 403
+
+
+init_db()
+
+if __name__ == "__main__":
+    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
