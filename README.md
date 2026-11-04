@@ -24,6 +24,16 @@ Each entry keeps:
    typing is still recorded, and entries typed more than 1 hour late are shown on the
    admin dashboard.
 
+## Operators can add new items
+
+On the entry form an operator can add, without asking admin:
+
+- **New machine**: choose "+ Add new machine" and type the name. It is added to the operator's own unit.
+- **New material**: tap "+ New" and type it (e.g. ZINTEC).
+- **New sheet name**: pick from the saved list or just type a new one. New names are saved for next time.
+
+Admin can see all of these in Setup and hide wrong ones (old entries stay as they are).
+
 ## Who sees what
 
 - **Operator**: sees only machines of their own unit and only their own entries.

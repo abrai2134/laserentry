@@ -45,3 +45,6 @@ th { background:#f9fafb; font-size:12px; text-transform:uppercase; color:var(--m
 .tag { display:inline-block; padding:1px 8px; border-radius:999px; font-size:12px; font-weight:600; }
 .tag.ok { background:#dcfce7; color:#14532d; } .tag.late { background:#fee2e2; color:#7f1d1d; } .tag.run { background:#dbeafe; color:#1e3a8a; }
 ul { padding-left:18px; } li { margin:4px 0; }
+.newbox { display:none; margin-top:6px; padding:10px; background:#fffbeb; border:1px dashed #f59e0b; border-radius:8px; }
+.newbox input, .newbox select { margin-top:0; margin-bottom:6px; }
+.scrollbox { max-height:320px; overflow-y:auto; }
