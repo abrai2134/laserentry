@@ -48,11 +48,13 @@
     <datalist id="thk">{% for t in thicknesses %}<option value="{{ t }}">{% endfor %}</datalist>
   </label>
 
-  <label>Sheet name
+  <label for="sheet">Sheet name</label>
+  <div class="row">
     <input name="sheet_name" id="sheet" list="sheets" placeholder="Pick from list or type a new name" value="{{ form.sheet_name or '' }}" required autocapitalize="characters" autocomplete="off">
-    <datalist id="sheets">{% for n in sheet_names %}<option value="{{ n }}">{% endfor %}</datalist>
-  </label>
-  <div class="muted small" id="sheetHint"></div>
+    <button type="button" class="btn addbtn" id="addSheet">+ Add</button>
+  </div>
+  <datalist id="sheets">{% for n in sheet_names %}<option value="{{ n }}">{% endfor %}</datalist>
+  <div class="small" id="sheetHint"></div>
 
   <label>Quantity (pcs / sheets)
     <input name="qty" type="number" min="1" value="{{ form.qty or 1 }}" inputmode="numeric">
@@ -83,11 +85,32 @@
     document.getElementById('newMaterialBox').style.display = isNewMat ? 'block' : 'none';
     document.getElementById('newMaterial').required = isNewMat;
     const sheet = document.getElementById('sheet').value.trim().toUpperCase();
-    document.getElementById('sheetHint').textContent = sheet && !known.has(sheet) ? 'New sheet name - it will be saved to the list.' : '';
+    const isNewSheet = sheet && !known.has(sheet);
+    document.getElementById('addSheet').style.display = isNewSheet ? '' : 'none';
+    const hint = document.getElementById('sheetHint');
+    if (isNewSheet) { hint.className = 'small warn'; hint.textContent = 'New sheet name. Press "+ Add" to save it to the list.'; }
+    else if (!hint.dataset.keep) { hint.className = 'small'; hint.textContent = ''; }
     const mname = isNewM ? document.getElementById('newMachine').value : (o && o.dataset.name);
     const code = clean(document.getElementById('thickness').value) + clean(mname) + clean(sheet);
     document.getElementById('code').textContent = code || '-';
   }
+  document.getElementById('addSheet').addEventListener('click', async () => {
+    const box = document.getElementById('sheet'), hint = document.getElementById('sheetHint');
+    const fd = new FormData();
+    fd.append('csrf', '{{ csrf_token }}'); fd.append('name', box.value);
+    try {
+      const res = await fetch('{{ url_for("add_sheet_name") }}', {method: 'POST', body: fd});
+      const data = await res.json();
+      if (data.ok) {
+        known.add(data.name); box.value = data.name;
+        const opt = document.createElement('option'); opt.value = data.name;
+        document.getElementById('sheets').appendChild(opt);
+        hint.dataset.keep = '1'; upd(); delete hint.dataset.keep;
+        hint.className = 'small okmsg'; hint.textContent = '✔ ' + data.message;
+      } else { hint.className = 'small warn'; hint.textContent = data.message; }
+    } catch (e) { hint.className = 'small warn'; hint.textContent = 'Could not save. Refresh the page and try again.'; }
+  });
+  document.getElementById('sheet').addEventListener('input', () => { delete document.getElementById('sheetHint').dataset.keep; });
   document.getElementById('f').addEventListener('input', upd);
   document.getElementById('f').addEventListener('change', upd); upd();
 </script>

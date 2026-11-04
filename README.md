@@ -30,7 +30,7 @@ On the entry form an operator can add, without asking admin:
 
 - **New machine**: choose "+ Add new machine" and type the name. It is added to the operator's own unit.
 - **New material**: tap "+ New" and type it (e.g. ZINTEC).
-- **New sheet name**: pick from the saved list or just type a new one. New names are saved for next time.
+- **New sheet name**: type it and press the orange "+ Add" button (it is also saved automatically on START/SAVE).
 
 Admin can see all of these in Setup and hide wrong ones (old entries stay as they are).
 

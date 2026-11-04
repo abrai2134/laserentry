@@ -48,3 +48,5 @@ ul { padding-left:18px; } li { margin:4px 0; }
 .newbox { display:none; margin-top:6px; padding:10px; background:#fffbeb; border:1px dashed #f59e0b; border-radius:8px; }
 .newbox input, .newbox select { margin-top:0; margin-bottom:6px; }
 .scrollbox { max-height:320px; overflow-y:auto; }
+.addbtn { flex:0 0 auto; background:var(--warn); margin-top:4px; }
+.warn { color:var(--warn); font-weight:600; } .okmsg { color:var(--go); font-weight:600; }

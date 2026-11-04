@@ -446,6 +446,20 @@ def new_entry():
                            now_local=now().strftime("%Y-%m-%dT%H:%M"))
 
 
+@app.route("/sheet-names/add", methods=["POST"])
+@login_required
+def add_sheet_name():
+    """Operator adds a sheet name to the saved list from the entry form (no page reload)."""
+    name = request.form.get("name", "").strip().upper()
+    if not clean_code(name):
+        return {"ok": False, "message": "Type a sheet name first."}, 400
+    db = get_db()
+    is_new = remember("sheet_names", name, current_user()["id"])
+    db.commit()
+    return {"ok": True, "name": name,
+            "message": f"{name} added to sheet list." if is_new else f"{name} is already in the list."}
+
+
 @app.route("/entry/<int:eid>/finish", methods=["POST"])
 @login_required
 def finish_entry(eid):
