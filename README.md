@@ -31,9 +31,15 @@ Each entry keeps:
   late entries), all entries with filters, Excel (CSV) download, delete wrong entries,
   and Setup (add units, machines, operators, reset passwords).
 
-## Install and run (on one PC / server in the office network)
+## Easiest way on Windows
 
-Needs Python 3.9 or newer.
+1. Install Python from python.org (tick **"Add python.exe to PATH"** during install).
+2. Download this project (GitHub: Code -> Download ZIP) and unzip it.
+3. Double-click **START_LASER_ENTRY.bat**. Keep that black window open.
+
+## Install and run by hand (on one PC / server in the office network)
+
+Needs Python 3.9 or newer. Type these in Command Prompt (not inside Python):
 
 ```bash
 pip install -r requirements.txt
