@@ -34,6 +34,14 @@ On the entry form an operator can add, without asking admin:
 
 Admin can see all of these in Setup and hide wrong ones (old entries stay as they are).
 
+## Summary (for incentive)
+
+Menu **Summary** shows Daily / Weekly (Mon-Sun) / Monthly totals per operator,
+split by material and thickness (MS 16G, MS 14G, SS 2MM ...), with total sheets,
+qty and cutting time, plus a day-wise table for the week or month.
+Filter by unit or material and download it as Excel (CSV).
+Only finished sheets are counted. Operators see their own summary only.
+
 ## Who sees what
 
 - **Operator**: sees only machines of their own unit and only their own entries.

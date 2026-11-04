@@ -578,6 +578,141 @@ def entries_csv():
                     headers={"Content-Disposition": f"attachment; filename={name}"})
 
 
+# ---------------------------------------------------------------- summary (for incentive)
+def period_range(period, day):
+    """Return (from_date, to_date, label, prev_day, next_day) for day / week / month."""
+    if period == "week":
+        start = day - timedelta(days=day.weekday())            # Monday
+        end = start + timedelta(days=6)
+        label = f"Week {start.strftime('%d %b')} - {end.strftime('%d %b %Y')}"
+        return start, end, label, start - timedelta(days=7), start + timedelta(days=7)
+    if period == "month":
+        start = day.replace(day=1)
+        nxt = (start + timedelta(days=32)).replace(day=1)
+        end = nxt - timedelta(days=1)
+        prev = (start - timedelta(days=1)).replace(day=1)
+        return start, end, start.strftime("%B %Y"), prev, nxt
+    return day, day, day.strftime("%d %b %Y (%A)"), day - timedelta(days=1), day + timedelta(days=1)
+
+
+def thickness_key(t):
+    """Order thickness thick -> thin: gauges (10G before 16G) then mm (larger first)."""
+    m = re.match(r"^(\d+(?:\.\d+)?)(G|MM)?$", t or "")
+    if not m:
+        return (2, 0, t)
+    num = float(m.group(1))
+    return (0, num, t) if m.group(2) == "G" else (1, -num, t)
+
+
+def build_summary(args, me):
+    period = args.get("period") if args.get("period") in ("day", "week", "month") else "month"
+    try:
+        day = datetime.strptime(args.get("date", ""), "%Y-%m-%d").date()
+    except ValueError:
+        day = now().date()
+    start, end, label, prev_day, next_day = period_range(period, day)
+
+    where = "e.cut_end IS NOT NULL AND substr(e.cut_start,1,10) BETWEEN ? AND ?"
+    params = [start.isoformat(), end.isoformat()]
+    if me["role"] != "admin":
+        where += " AND e.user_id=?"
+        params.append(me["id"])
+    elif args.get("unit"):
+        where += " AND e.unit_id=?"
+        params.append(args["unit"])
+    if args.get("material"):
+        where += " AND e.material=?"
+        params.append(args["material"])
+
+    db = get_db()
+    rows = db.execute(
+        "SELECT e.user_id, us.full_name AS operator, un.name AS unit_name, e.material, e.thickness, "
+        "COUNT(*) AS sheets, SUM(e.qty) AS qty, "
+        "SUM((julianday(e.cut_end)-julianday(e.cut_start))*1440) AS minutes "
+        "FROM entries e JOIN users us ON us.id=e.user_id JOIN units un ON un.id=e.unit_id "
+        f"WHERE {where} GROUP BY e.user_id, e.material, e.thickness", params).fetchall()
+
+    mat_order = {m["name"]: i for i, m in enumerate(material_list(active_only=False))}
+    columns = sorted({(r["material"], r["thickness"]) for r in rows},
+                     key=lambda c: (mat_order.get(c[0], 999), c[0], thickness_key(c[1])))
+    ops = {}
+    for r in rows:
+        o = ops.setdefault(r["user_id"], {"operator": r["operator"], "unit": r["unit_name"], "cells": {},
+                                          "sheets": 0, "qty": 0, "minutes": 0})
+        o["cells"][(r["material"], r["thickness"])] = {"sheets": r["sheets"], "qty": r["qty"]}
+        o["sheets"] += r["sheets"]
+        o["qty"] += r["qty"]
+        o["minutes"] += r["minutes"] or 0
+    operators = sorted(ops.values(), key=lambda o: -o["sheets"])
+    col_totals = {c: {"sheets": sum(o["cells"].get(c, {}).get("sheets", 0) for o in operators),
+                      "qty": sum(o["cells"].get(c, {}).get("qty", 0) for o in operators)} for c in columns}
+    grand = {"sheets": sum(o["sheets"] for o in operators), "qty": sum(o["qty"] for o in operators),
+             "minutes": sum(o["minutes"] for o in operators)}
+
+    # day-by-day sheets per operator (for week / month)
+    daily, days = {}, []
+    if period != "day":
+        for r in db.execute(
+                "SELECT substr(e.cut_start,1,10) AS d, e.user_id, COUNT(*) AS sheets "
+                f"FROM entries e WHERE {where} GROUP BY d, e.user_id", params).fetchall():
+            daily.setdefault(r["d"], {})[r["user_id"]] = r["sheets"]
+        d = start
+        while d <= end:
+            days.append(d.isoformat())
+            d += timedelta(days=1)
+    op_ids = [uid for uid, _ in sorted(ops.items(), key=lambda kv: -kv[1]["sheets"])]
+    groups = []                                   # material header spans, same order as columns
+    for m, _t in columns:
+        if groups and groups[-1][0] == m:
+            groups[-1][1] += 1
+        else:
+            groups.append([m, 1])
+    return dict(period=period, date=day.isoformat(), label=label, start=start, end=end, groups=groups,
+                prev_day=prev_day.isoformat(), next_day=next_day.isoformat(),
+                columns=columns, operators=operators, col_totals=col_totals, grand=grand,
+                daily=daily, days=days, op_ids=op_ids, ops=ops)
+
+
+@app.route("/summary")
+@login_required
+def summary():
+    me = current_user()
+    data = build_summary(request.args, me)
+    db = get_db()
+    return render_template("summary.html", s=data, args=request.args,
+                           units=db.execute("SELECT * FROM units ORDER BY name").fetchall(),
+                           materials=[m["name"] for m in material_list(active_only=False)])
+
+
+@app.route("/summary.csv")
+@login_required
+def summary_csv():
+    s = build_summary(request.args, current_user())
+    out = io.StringIO()
+    w = csv.writer(out)
+    w.writerow([f"Laser cutting summary - {s['label']}"])
+    w.writerow(["Numbers = sheets cut (finished entries only)."])
+    w.writerow([])
+    w.writerow(["Operator", "Unit"] + [f"{m} {t}" for m, t in s["columns"]] +
+               ["Total sheets", "Total qty", "Cutting hours"])
+    for o in s["operators"]:
+        w.writerow([o["operator"], o["unit"]] +
+                   [o["cells"].get(c, {}).get("sheets", 0) for c in s["columns"]] +
+                   [o["sheets"], o["qty"], round(o["minutes"] / 60, 2)])
+    w.writerow(["TOTAL", ""] + [s["col_totals"][c]["sheets"] for c in s["columns"]] +
+               [s["grand"]["sheets"], s["grand"]["qty"], round(s["grand"]["minutes"] / 60, 2)])
+    if s["days"]:
+        w.writerow([])
+        w.writerow(["Day-wise sheets"])
+        w.writerow(["Date"] + [s["ops"][u]["operator"] for u in s["op_ids"]] + ["Total"])
+        for d in s["days"]:
+            vals = [s["daily"].get(d, {}).get(u, 0) for u in s["op_ids"]]
+            w.writerow([datetime.strptime(d, "%Y-%m-%d").strftime("%d-%m-%Y")] + vals + [sum(vals)])
+    name = f"laser_summary_{s['period']}_{s['start'].isoformat()}.csv"
+    return Response("\ufeff" + out.getvalue(), mimetype="text/csv",
+                    headers={"Content-Disposition": f"attachment; filename={name}"})
+
+
 @app.route("/dashboard")
 @admin_required
 def dashboard():

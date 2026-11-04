@@ -1,0 +1,74 @@
+{% extends 'base.html' %}
+{% block body %}
+{% set q = {'unit': args.get('unit',''), 'material': args.get('material','')} %}
+<div class="tabs">
+  {% for p, t in [('day','Daily'),('week','Weekly'),('month','Monthly')] %}
+    <a class="{{ 'on' if s.period == p }}" href="{{ url_for('summary', period=p, date=s.date, **q) }}">{{ t }}</a>
+  {% endfor %}
+</div>
+
+<form class="filters" method="get">
+  <input type="hidden" name="period" value="{{ s.period }}">
+  <a class="btn alt" href="{{ url_for('summary', period=s.period, date=s.prev_day, **q) }}">◀</a>
+  <label>Date <input type="date" name="date" value="{{ s.date }}" onchange="this.form.submit()"></label>
+  <a class="btn alt" href="{{ url_for('summary', period=s.period, date=s.next_day, **q) }}">▶</a>
+  {% if me.role == 'admin' %}
+  <label>Unit <select name="unit" onchange="this.form.submit()"><option value="">All</option>{% for u in units %}<option value="{{ u.id }}" {{ 'selected' if args.get('unit') == u.id|string }}>{{ u.name }}</option>{% endfor %}</select></label>
+  {% endif %}
+  <label>Material <select name="material" onchange="this.form.submit()"><option value="">All</option>{% for m in materials %}<option {{ 'selected' if args.get('material') == m }}>{{ m }}</option>{% endfor %}</select></label>
+  <a class="btn" href="{{ url_for('summary_csv', period=s.period, date=s.date, **q) }}">Download Excel (CSV)</a>
+</form>
+
+<h2>{{ s.label }}</h2>
+<div class="stats">
+  <div class="stat"><b>{{ s.grand.sheets }}</b><span>sheets cut</span></div>
+  <div class="stat"><b>{{ s.grand.qty }}</b><span>qty</span></div>
+  <div class="stat"><b>{{ fmt_minutes(s.grand.minutes|round|int) }}</b><span>cutting time</span></div>
+  {% if me.role == 'admin' %}<div class="stat"><b>{{ s.operators|length }}</b><span>operators</span></div>{% endif %}
+</div>
+
+<h2>Sheets by operator, material and thickness</h2>
+<p class="muted small">Number = sheets cut (finished entries). Small number = qty. Running cuts are not counted until FINISH.</p>
+<div class="tablewrap">
+<table class="pivot">
+  <thead>
+    <tr><th rowspan="2">Operator</th>{% if me.role == 'admin' %}<th rowspan="2">Unit</th>{% endif %}
+      {% for m, n in s.groups %}<th colspan="{{ n }}" class="grp">{{ m }}</th>{% endfor %}
+      <th rowspan="2" class="tot">Total sheets</th><th rowspan="2">Qty</th><th rowspan="2">Cutting time</th></tr>
+    <tr>{% for m, t in s.columns %}<th class="num">{{ t }}</th>{% endfor %}</tr>
+  </thead>
+  <tbody>
+  {% for o in s.operators %}
+    <tr><td><b>{{ o.operator }}</b></td>{% if me.role == 'admin' %}<td>{{ o.unit }}</td>{% endif %}
+      {% for c in s.columns %}{% set cell = o.cells.get(c) %}
+        <td class="num">{% if cell %}<b>{{ cell.sheets }}</b>{% if cell.qty != cell.sheets %}<div class="muted small">{{ cell.qty }} qty</div>{% endif %}{% else %}<span class="muted">-</span>{% endif %}</td>
+      {% endfor %}
+      <td class="num tot">{{ o.sheets }}</td><td class="num">{{ o.qty }}</td><td>{{ fmt_minutes(o.minutes|round|int) }}</td></tr>
+  {% else %}
+    <tr><td colspan="5" class="muted">No finished sheets in this period.</td></tr>
+  {% endfor %}
+  </tbody>
+  {% if s.operators %}
+  <tfoot><tr><th>TOTAL</th>{% if me.role == 'admin' %}<th></th>{% endif %}
+    {% for c in s.columns %}<th class="num">{{ s.col_totals[c].sheets }}</th>{% endfor %}
+    <th class="num tot">{{ s.grand.sheets }}</th><th class="num">{{ s.grand.qty }}</th><th>{{ fmt_minutes(s.grand.minutes|round|int) }}</th></tr></tfoot>
+  {% endif %}
+</table>
+</div>
+
+{% if s.days and s.operators %}
+<h2>Day-wise sheets</h2>
+<div class="tablewrap">
+<table class="pivot">
+  <thead><tr><th>Date</th>{% for u in s.op_ids %}<th class="num">{{ s.ops[u].operator }}</th>{% endfor %}<th class="num tot">Total</th></tr></thead>
+  <tbody>
+  {% for d in s.days %}{% set row = s.daily.get(d, {}) %}
+    <tr><td><a href="{{ url_for('summary', period='day', date=d, **q) }}">{{ d[8:10] }}-{{ d[5:7] }}-{{ d[:4] }}</a></td>
+      {% for u in s.op_ids %}<td class="num">{{ row.get(u) or '' }}</td>{% endfor %}
+      <td class="num tot">{{ row.values()|sum or '' }}</td></tr>
+  {% endfor %}
+  </tbody>
+</table>
+</div>
+{% endif %}
+{% endblock %}

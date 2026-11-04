@@ -50,3 +50,10 @@ ul { padding-left:18px; } li { margin:4px 0; }
 .scrollbox { max-height:320px; overflow-y:auto; }
 .addbtn { flex:0 0 auto; background:var(--warn); margin-top:4px; }
 .warn { color:var(--warn); font-weight:600; } .okmsg { color:var(--go); font-weight:600; }
+.stats { display:grid; grid-template-columns:repeat(auto-fit,minmax(140px,1fr)); gap:10px; margin-bottom:8px; }
+.stat { background:var(--card); border:1px solid var(--line); border-radius:10px; padding:12px 14px; }
+.stat b { display:block; font-size:24px; } .stat span { color:var(--muted); font-size:13px; }
+.pivot td.num, .pivot th.num { text-align:center; }
+.pivot th.grp { text-align:center; border-left:1px solid var(--line); background:#eef2ff; color:#1e3a8a; }
+.pivot .tot { background:#f0fdf4; font-weight:700; }
+.pivot tfoot th { background:#f3f4f6; color:var(--ink); font-size:14px; text-transform:none; }
