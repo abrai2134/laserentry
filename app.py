@@ -623,6 +623,9 @@ def build_summary(args, me):
     if args.get("material"):
         where += " AND e.material=?"
         params.append(args["material"])
+    if args.get("machine"):
+        where += " AND e.machine_id=?"
+        params.append(args["machine"])
 
     db = get_db()
     rows = db.execute(
@@ -679,7 +682,13 @@ def summary():
     me = current_user()
     data = build_summary(request.args, me)
     db = get_db()
-    return render_template("summary.html", s=data, args=request.args,
+    if me["role"] == "admin" or not me["unit_id"]:
+        machines = db.execute("SELECT m.*, u.name AS unit_name FROM machines m JOIN units u "
+                              "ON u.id=m.unit_id ORDER BY u.name, m.name").fetchall()
+    else:
+        machines = db.execute("SELECT m.*, u.name AS unit_name FROM machines m JOIN units u "
+                              "ON u.id=m.unit_id WHERE m.unit_id=? ORDER BY m.name", (me["unit_id"],)).fetchall()
+    return render_template("summary.html", s=data, args=request.args, machines=machines,
                            units=db.execute("SELECT * FROM units ORDER BY name").fetchall(),
                            materials=[m["name"] for m in material_list(active_only=False)])
 
@@ -690,7 +699,13 @@ def summary_csv():
     s = build_summary(request.args, current_user())
     out = io.StringIO()
     w = csv.writer(out)
-    w.writerow([f"Laser cutting summary - {s['label']}"])
+    title = f"Laser cutting summary - {s['label']}"
+    if request.args.get("machine"):
+        m = get_db().execute("SELECT name FROM machines WHERE id=?", (request.args["machine"],)).fetchone()
+        title += f" - Machine {m['name'] if m else ''}"
+    if request.args.get("material"):
+        title += f" - Material {request.args['material']}"
+    w.writerow([title])
     w.writerow(["Numbers = sheets cut (finished entries only)."])
     w.writerow([])
     w.writerow(["Operator", "Unit"] + [f"{m} {t}" for m, t in s["columns"]] +

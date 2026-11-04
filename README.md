@@ -39,7 +39,7 @@ Admin can see all of these in Setup and hide wrong ones (old entries stay as the
 Menu **Summary** shows Daily / Weekly (Mon-Sun) / Monthly totals per operator,
 split by material and thickness (MS 16G, MS 14G, SS 2MM ...), with total sheets,
 qty and cutting time, plus a day-wise table for the week or month.
-Filter by unit or material and download it as Excel (CSV).
+Filter by unit, machine or material and download it as Excel (CSV).
 Only finished sheets are counted. Operators see their own summary only.
 
 ## Who sees what

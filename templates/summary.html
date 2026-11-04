@@ -1,6 +1,6 @@
 {% extends 'base.html' %}
 {% block body %}
-{% set q = {'unit': args.get('unit',''), 'material': args.get('material','')} %}
+{% set q = {'unit': args.get('unit',''), 'machine': args.get('machine',''), 'material': args.get('material','')} %}
 <div class="tabs">
   {% for p, t in [('day','Daily'),('week','Weekly'),('month','Monthly')] %}
     <a class="{{ 'on' if s.period == p }}" href="{{ url_for('summary', period=p, date=s.date, **q) }}">{{ t }}</a>
@@ -15,6 +15,7 @@
   {% if me.role == 'admin' %}
   <label>Unit <select name="unit" onchange="this.form.submit()"><option value="">All</option>{% for u in units %}<option value="{{ u.id }}" {{ 'selected' if args.get('unit') == u.id|string }}>{{ u.name }}</option>{% endfor %}</select></label>
   {% endif %}
+  <label>Machine <select name="machine" onchange="this.form.submit()"><option value="">All</option>{% for m in machines %}<option value="{{ m.id }}" {{ 'selected' if args.get('machine') == m.id|string }}>{% if me.role == 'admin' or not me.unit_id %}{{ m.unit_name }} / {% endif %}{{ m.name }}</option>{% endfor %}</select></label>
   <label>Material <select name="material" onchange="this.form.submit()"><option value="">All</option>{% for m in materials %}<option {{ 'selected' if args.get('material') == m }}>{{ m }}</option>{% endfor %}</select></label>
   <a class="btn" href="{{ url_for('summary_csv', period=s.period, date=s.date, **q) }}">Download Excel (CSV)</a>
 </form>
