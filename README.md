@@ -32,7 +32,11 @@ On the entry form an operator can add, without asking admin:
 - **New material**: tap "+ New" and type it (e.g. ZINTEC).
 - **New sheet name**: type it and press the orange "+ Add" button (it is also saved automatically on START/SAVE).
 
-Admin can see all of these in Setup and hide wrong ones (old entries stay as they are).
+- **New thickness**: type it (e.g. 7MM) and press "+ Add".
+
+Operators also have a **Masters** page (top menu) to add machines, materials, thickness
+and sheet names any time. Admin sees the same page and can hide wrong items
+(old entries stay as they are).
 
 ## Summary (for incentive)
 

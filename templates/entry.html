@@ -43,10 +43,13 @@
     <input name="new_material" id="newMaterial" placeholder="New material, e.g. ZINTEC" value="{{ form.new_material or '' }}" autocapitalize="characters">
   </div>
 
-  <label>Thickness
-    <input name="thickness" id="thickness" list="thk" placeholder="16G" value="{{ form.thickness or '' }}" required autocapitalize="characters">
-    <datalist id="thk">{% for t in thicknesses %}<option value="{{ t }}">{% endfor %}</datalist>
-  </label>
+  <label for="thickness">Thickness</label>
+  <div class="row">
+    <input name="thickness" id="thickness" list="thk" placeholder="Pick from list or type new, e.g. 16G" value="{{ form.thickness or '' }}" required autocapitalize="characters" autocomplete="off">
+    <button type="button" class="btn addbtn" id="addThk">+ Add</button>
+  </div>
+  <datalist id="thk">{% for t in thicknesses %}<option value="{{ t }}">{% endfor %}</datalist>
+  <div class="small" id="thkHint"></div>
 
   <label for="sheet">Sheet name</label>
   <div class="row">
@@ -74,7 +77,21 @@
 </form>
 <script>
   const clean = s => (s || '').toUpperCase().replace(/[^A-Z0-9.\-_]/g, '');
-  const known = new Set({{ sheet_names|tojson }});
+  // quick-add boxes: type a new value, press "+ Add", it is saved to the list for everyone
+  const quick = [
+    {kind: 'thickness', label: 'thickness', input: 'thickness', btn: 'addThk', hint: 'thkHint', list: 'thk',
+     norm: clean, known: new Set({{ thicknesses|tojson }})},
+    {kind: 'sheet', label: 'sheet name', input: 'sheet', btn: 'addSheet', hint: 'sheetHint', list: 'sheets',
+     norm: v => (v || '').trim().toUpperCase(), known: new Set({{ sheet_names|tojson }})},
+  ];
+  function updQuick(q) {
+    const v = q.norm(document.getElementById(q.input).value);
+    const isNew = v && !q.known.has(v);
+    document.getElementById(q.btn).style.display = isNew ? '' : 'none';
+    const hint = document.getElementById(q.hint);
+    if (isNew) { hint.className = 'small warn'; hint.textContent = 'New ' + q.label + '. Press "+ Add" to save it to the list.'; }
+    else if (!q.keep) { hint.className = 'small'; hint.textContent = ''; }
+  }
   function upd() {
     const m = document.getElementById('machine'), o = m.options[m.selectedIndex];
     const isNewM = m.value === 'new';
@@ -84,33 +101,30 @@
     const isNewMat = mat && mat.value === '__NEW';
     document.getElementById('newMaterialBox').style.display = isNewMat ? 'block' : 'none';
     document.getElementById('newMaterial').required = isNewMat;
-    const sheet = document.getElementById('sheet').value.trim().toUpperCase();
-    const isNewSheet = sheet && !known.has(sheet);
-    document.getElementById('addSheet').style.display = isNewSheet ? '' : 'none';
-    const hint = document.getElementById('sheetHint');
-    if (isNewSheet) { hint.className = 'small warn'; hint.textContent = 'New sheet name. Press "+ Add" to save it to the list.'; }
-    else if (!hint.dataset.keep) { hint.className = 'small'; hint.textContent = ''; }
+    quick.forEach(updQuick);
     const mname = isNewM ? document.getElementById('newMachine').value : (o && o.dataset.name);
-    const code = clean(document.getElementById('thickness').value) + clean(mname) + clean(sheet);
+    const code = clean(document.getElementById('thickness').value) + clean(mname) + clean(document.getElementById('sheet').value);
     document.getElementById('code').textContent = code || '-';
   }
-  document.getElementById('addSheet').addEventListener('click', async () => {
-    const box = document.getElementById('sheet'), hint = document.getElementById('sheetHint');
-    const fd = new FormData();
-    fd.append('csrf', '{{ csrf_token }}'); fd.append('name', box.value);
-    try {
-      const res = await fetch('{{ url_for("add_sheet_name") }}', {method: 'POST', body: fd});
-      const data = await res.json();
-      if (data.ok) {
-        known.add(data.name); box.value = data.name;
-        const opt = document.createElement('option'); opt.value = data.name;
-        document.getElementById('sheets').appendChild(opt);
-        hint.dataset.keep = '1'; upd(); delete hint.dataset.keep;
-        hint.className = 'small okmsg'; hint.textContent = '✔ ' + data.message;
-      } else { hint.className = 'small warn'; hint.textContent = data.message; }
-    } catch (e) { hint.className = 'small warn'; hint.textContent = 'Could not save. Refresh the page and try again.'; }
+  quick.forEach(q => {
+    document.getElementById(q.input).addEventListener('input', () => { q.keep = false; });
+    document.getElementById(q.btn).addEventListener('click', async () => {
+      const box = document.getElementById(q.input), hint = document.getElementById(q.hint);
+      const fd = new FormData();
+      fd.append('csrf', '{{ csrf_token }}'); fd.append('kind', q.kind); fd.append('name', box.value);
+      try {
+        const res = await fetch('{{ url_for("add_item") }}', {method: 'POST', body: fd});
+        const data = await res.json();
+        if (data.ok) {
+          q.known.add(data.name); box.value = data.name;
+          const opt = document.createElement('option'); opt.value = data.name;
+          document.getElementById(q.list).appendChild(opt);
+          q.keep = true; upd();
+          hint.className = 'small okmsg'; hint.textContent = '✔ ' + data.message;
+        } else { hint.className = 'small warn'; hint.textContent = data.message; }
+      } catch (e) { hint.className = 'small warn'; hint.textContent = 'Could not save. Refresh the page and try again.'; }
+    });
   });
-  document.getElementById('sheet').addEventListener('input', () => { delete document.getElementById('sheetHint').dataset.keep; });
   document.getElementById('f').addEventListener('input', upd);
   document.getElementById('f').addEventListener('change', upd); upd();
 </script>

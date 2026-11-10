@@ -16,7 +16,7 @@ label { display:block; margin:10px 0 4px; font-weight:600; font-size:14px; }
 input, select { font:inherit; padding:10px; border:1px solid #d1d5db; border-radius:8px; width:100%; background:#fff; margin-top:4px; }
 .filters { display:flex; flex-wrap:wrap; gap:8px; align-items:flex-end; }
 .filters label { margin:0; } .filters input, .filters select { width:auto; }
-.row { display:flex; gap:8px; align-items:center; flex-wrap:wrap; } .row input, .row select { width:auto; flex:1; margin:0; }
+.row { display:flex; gap:8px; align-items:center; flex-wrap:wrap; } .row input, .row select { width:auto; flex:1 1 140px; min-width:0; margin:0; }
 .inline { display:inline; } .inline input, .inline select { width:auto; padding:4px 6px; margin:0; }
 .btn { display:inline-block; border:0; border-radius:8px; padding:10px 16px; background:var(--accent); color:#fff; font:inherit; font-weight:600; cursor:pointer; text-decoration:none; text-align:center; }
 .btn.big { width:100%; padding:16px; font-size:17px; margin-top:14px; }
@@ -57,3 +57,5 @@ ul { padding-left:18px; } li { margin:4px 0; }
 .pivot th.grp { text-align:center; border-left:1px solid var(--line); background:#eef2ff; color:#1e3a8a; }
 .pivot .tot { background:#f0fdf4; font-weight:700; }
 .pivot tfoot th { background:#f3f4f6; color:var(--ink); font-size:14px; text-transform:none; }
+ul.cols { columns:3 90px; } ul.cols li { break-inside:avoid; }
+input.search { margin:10px 0 0; }

@@ -100,6 +100,13 @@ CREATE TABLE IF NOT EXISTS materials (
     added_by INTEGER REFERENCES users(id),
     added_at TEXT
 );
+CREATE TABLE IF NOT EXISTS thicknesses (
+    id INTEGER PRIMARY KEY,
+    name TEXT NOT NULL UNIQUE,
+    active INTEGER NOT NULL DEFAULT 1,
+    added_by INTEGER REFERENCES users(id),
+    added_at TEXT
+);
 CREATE TABLE IF NOT EXISTS sheet_names (
     id INTEGER PRIMARY KEY,
     name TEXT NOT NULL UNIQUE,
@@ -135,6 +142,10 @@ def init_db():
         print("Created default login  ->  username: admin   password: admin123  (change it!)")
     if not db.execute("SELECT 1 FROM materials").fetchone():
         db.executemany("INSERT INTO materials(name) VALUES (?)", [(m,) for m in MATERIALS])
+    if not db.execute("SELECT 1 FROM thicknesses").fetchone():
+        db.executemany("INSERT INTO thicknesses(name) VALUES (?)", [(t,) for t in THICKNESS_SUGGESTIONS])
+    db.execute("INSERT OR IGNORE INTO thicknesses(name, added_at) "
+               "SELECT DISTINCT thickness, MIN(entered_at) FROM entries GROUP BY thickness")
     # older databases: also remember sheet names that were already entered
     db.execute("INSERT OR IGNORE INTO sheet_names(name, added_at) "
                "SELECT DISTINCT sheet_name, MIN(entered_at) FROM entries GROUP BY sheet_name")
@@ -345,6 +356,19 @@ def material_list(active_only=True):
     return get_db().execute(sql).fetchall()
 
 
+def thickness_list():
+    rows = get_db().execute("SELECT name FROM thicknesses WHERE active=1").fetchall()
+    return sorted((r["name"] for r in rows), key=thickness_key)
+
+
+# what operators can add themselves: kind -> (table, label, cleaner)
+ITEM_KINDS = {
+    "sheet": ("sheet_names", "sheet name", lambda v: (v or "").strip().upper()),
+    "thickness": ("thicknesses", "thickness", clean_code),
+    "material": ("materials", "material", clean_code),
+}
+
+
 def sheet_name_list():
     return [r["name"] for r in get_db().execute(
         "SELECT name FROM sheet_names WHERE active=1 ORDER BY name").fetchall()]
@@ -450,6 +474,8 @@ def new_entry():
                     added.append(f"machine {new_machine}")
             if remember("materials", material, me["id"]):
                 added.append(f"material {material}")
+            if remember("thicknesses", thickness, me["id"]):
+                added.append(f"thickness {thickness}")
             if remember("sheet_names", sheet_name.upper(), me["id"]):
                 added.append(f"sheet name {sheet_name.upper()}")
             code = make_sheet_code(thickness, machine["name"], sheet_name)
@@ -470,22 +496,82 @@ def new_entry():
                            materials=[m["name"] for m in material_list()],
                            sheet_names=sheet_name_list(),
                            units=get_db().execute("SELECT * FROM units ORDER BY name").fetchall(),
-                           thicknesses=THICKNESS_SUGGESTIONS, form=request.form,
+                           thicknesses=thickness_list(), form=request.form,
                            now_local=now().strftime("%Y-%m-%dT%H:%M"))
 
 
+@app.route("/items/add", methods=["POST"])
 @app.route("/sheet-names/add", methods=["POST"])
 @login_required
-def add_sheet_name():
-    """Operator adds a sheet name to the saved list from the entry form (no page reload)."""
-    name = request.form.get("name", "").strip().upper()
+def add_item():
+    """Add a sheet name / thickness / material to the saved list from the entry form (no page reload)."""
+    kind = request.form.get("kind", "sheet")
+    if kind not in ITEM_KINDS:
+        abort(400)
+    table, label, cleaner = ITEM_KINDS[kind]
+    name = cleaner(request.form.get("name"))
     if not clean_code(name):
-        return {"ok": False, "message": "Type a sheet name first."}, 400
-    db = get_db()
-    is_new = remember("sheet_names", name, current_user()["id"])
-    db.commit()
+        return {"ok": False, "message": f"Type a {label} first."}, 400
+    is_new = remember(table, name, current_user()["id"])
+    get_db().commit()
     return {"ok": True, "name": name,
-            "message": f"{name} added to sheet list." if is_new else f"{name} is already in the list."}
+            "message": f"{name} added to {label} list." if is_new else f"{name} is already in the list."}
+
+
+# ---------------------------------------------------------------- masters (operators + admin)
+@app.route("/masters", methods=["GET", "POST"])
+@login_required
+def masters():
+    """Machines, materials, thickness and sheet names. Everyone can add; only admin can hide."""
+    me = current_user()
+    is_admin = me["role"] == "admin"
+    db = get_db()
+    if request.method == "POST":
+        f = request.form
+        action = f.get("action", "")
+        if action == "add_machine":
+            name = clean_code(f.get("name"))
+            unit_id = f.get("unit_id") if (is_admin or not me["unit_id"]) else me["unit_id"]
+            unit = db.execute("SELECT * FROM units WHERE id=?", (unit_id,)).fetchone() if unit_id else None
+            if not name or not unit:
+                flash("Type the machine name and choose the unit.", "error")
+            else:
+                row = db.execute("SELECT * FROM machines WHERE name=? AND unit_id=?", (name, unit["id"])).fetchone()
+                if row:
+                    db.execute("UPDATE machines SET active=1 WHERE id=?", (row["id"],))
+                    flash(f"{name} is already in {unit['name']}.", "ok")
+                else:
+                    db.execute("INSERT INTO machines(name, unit_id) VALUES (?,?)", (name, unit["id"]))
+                    flash(f"Machine {name} added to {unit['name']}.", "ok")
+        elif action.startswith("add_") and action[4:] in ITEM_KINDS:
+            table, label, cleaner = ITEM_KINDS[action[4:]]
+            name = cleaner(f.get("name"))
+            if clean_code(name):
+                is_new = remember(table, name, me["id"])
+                flash(f"{label.capitalize()} {name} added." if is_new else f"{name} is already in the list.", "ok")
+        elif action.startswith("toggle_") and is_admin:
+            table = {"machine": "machines", "material": "materials", "thickness": "thicknesses",
+                     "sheet": "sheet_names"}.get(action[7:])
+            if table:
+                db.execute(f"UPDATE {table} SET active=1-active WHERE id=?", (f.get("id"),))
+        db.commit()
+        return redirect(url_for("masters") + "#" + f.get("anchor", ""))
+
+    def items(table, order="name"):
+        where = "" if is_admin else " WHERE t.active=1"
+        return db.execute(f"SELECT t.*, u.full_name AS added_by_name FROM {table} t "
+                          f"LEFT JOIN users u ON u.id=t.added_by{where} ORDER BY t.active DESC, t.{order}").fetchall()
+
+    if is_admin or not me["unit_id"]:
+        machines = db.execute("SELECT m.*, u.name AS unit_name FROM machines m JOIN units u ON u.id=m.unit_id "
+                              + ("" if is_admin else "WHERE m.active=1 ") + "ORDER BY u.name, m.name").fetchall()
+    else:
+        machines = db.execute("SELECT m.*, u.name AS unit_name FROM machines m JOIN units u ON u.id=m.unit_id "
+                              "WHERE m.active=1 AND m.unit_id=? ORDER BY m.name", (me["unit_id"],)).fetchall()
+    thick = sorted(items("thicknesses"), key=lambda r: (-r["active"], thickness_key(r["name"])))
+    return render_template("masters.html", machines=machines, materials=items("materials", "id"),
+                           thicknesses=thick, sheets=items("sheet_names"),
+                           units=db.execute("SELECT * FROM units ORDER BY name").fetchall())
 
 
 @app.route("/entry/<int:eid>/finish", methods=["POST"])
@@ -799,12 +885,6 @@ def admin():
             if action == "add_unit" and f.get("name", "").strip():
                 db.execute("INSERT INTO units(name) VALUES (?)", (f["name"].strip().upper(),))
                 flash("Unit added.", "ok")
-            elif action == "add_machine" and clean_code(f.get("name")) and f.get("unit_id"):
-                db.execute("INSERT INTO machines(name, unit_id) VALUES (?,?)",
-                           (clean_code(f["name"]), f["unit_id"]))
-                flash("Machine added.", "ok")
-            elif action == "toggle_machine":
-                db.execute("UPDATE machines SET active=1-active WHERE id=?", (f["id"],))
             elif action == "add_user":
                 username = re.sub(r"\s+", "", f.get("username", "").lower())
                 if not username or not f.get("full_name", "").strip() or len(f.get("password", "")) < 4:
@@ -828,15 +908,6 @@ def admin():
                     flash("You cannot disable yourself.", "error")
                 else:
                     db.execute("UPDATE users SET active=1-active WHERE id=?", (f["id"],))
-            elif action in ("add_material", "add_sheet_name"):
-                table = "materials" if action == "add_material" else "sheet_names"
-                name = clean_code(f.get("name")) if table == "materials" else f.get("name", "").strip().upper()
-                if name:
-                    remember(table, name, current_user()["id"])
-                    flash(f"{name} added.", "ok")
-            elif action in ("toggle_material", "toggle_sheet_name"):
-                table = "materials" if action == "toggle_material" else "sheet_names"
-                db.execute(f"UPDATE {table} SET active=1-active WHERE id=?", (f["id"],))
             elif action == "set_user_unit":
                 db.execute("UPDATE users SET unit_id=? WHERE id=?", (f.get("unit_id") or None, f["id"]))
                 flash("Unit updated.", "ok")
@@ -849,11 +920,7 @@ def admin():
                           "ORDER BY u.name, m.name").fetchall()
     users = db.execute("SELECT us.*, un.name AS unit_name FROM users us LEFT JOIN units un "
                        "ON un.id=us.unit_id ORDER BY us.role, us.full_name").fetchall()
-    materials = db.execute("SELECT * FROM materials ORDER BY active DESC, name").fetchall()
-    sheets = db.execute("SELECT s.*, u.full_name AS added_by_name FROM sheet_names s "
-                        "LEFT JOIN users u ON u.id=s.added_by ORDER BY s.active DESC, s.name").fetchall()
-    return render_template("admin.html", units=units, machines=machines, users=users,
-                           materials=materials, sheets=sheets)
+    return render_template("admin.html", units=units, machines=machines, users=users)
 
 
 # ---------------------------------------------------------------- backup / restore

@@ -9,38 +9,9 @@
     <ul>{% for u in units %}<li>{{ u.name }}</li>{% else %}<li class="muted">No units yet.</li>{% endfor %}</ul>
   </div>
   <div class="card">
-    <h2>Machines</h2>
-    {% if units %}
-    <form method="post" class="row">{{ csrf() }}<input type="hidden" name="action" value="add_machine">
-      <select name="unit_id" required>{% for u in units %}<option value="{{ u.id }}">{{ u.name }}</option>{% endfor %}</select>
-      <input name="name" placeholder="e.g. LASER1" required><button class="btn">Add machine</button></form>
-    {% else %}<p class="muted">Add a unit first.</p>{% endif %}
-    <ul>{% for m in machines %}<li>{{ m.unit_name }} / <b>{{ m.name }}</b> {% if not m.active %}<span class="tag late">off</span>{% endif %}
-      <form method="post" class="inline">{{ csrf() }}<input type="hidden" name="action" value="toggle_machine"><input type="hidden" name="id" value="{{ m.id }}">
-        <button class="link">{{ 'disable' if m.active else 'enable' }}</button></form></li>
-    {% else %}<li class="muted">No machines yet.</li>{% endfor %}</ul>
-    <p class="muted small">Machine name is used inside the sheet code, so keep it short (no spaces).</p>
-  </div>
-</div>
-
-<div class="grid2">
-  <div class="card">
-    <h2>Materials</h2>
-    <form method="post" class="row">{{ csrf() }}<input type="hidden" name="action" value="add_material">
-      <input name="name" placeholder="e.g. ZINTEC" required><button class="btn">Add material</button></form>
-    <ul>{% for m in materials %}<li><b>{{ m.name }}</b> {% if not m.active %}<span class="tag late">hidden</span>{% endif %}
-      <form method="post" class="inline">{{ csrf() }}<input type="hidden" name="action" value="toggle_material"><input type="hidden" name="id" value="{{ m.id }}">
-        <button class="link">{{ 'hide' if m.active else 'show' }}</button></form></li>{% endfor %}</ul>
-  </div>
-  <div class="card">
-    <h2>Sheet names ({{ sheets|length }})</h2>
-    <form method="post" class="row">{{ csrf() }}<input type="hidden" name="action" value="add_sheet_name">
-      <input name="name" placeholder="e.g. PANEL-A" required><button class="btn">Add sheet name</button></form>
-    <div class="scrollbox"><ul>{% for n in sheets %}<li><b>{{ n.name }}</b> <span class="muted small">{{ n.added_by_name or '' }}</span>
-      {% if not n.active %}<span class="tag late">hidden</span>{% endif %}
-      <form method="post" class="inline">{{ csrf() }}<input type="hidden" name="action" value="toggle_sheet_name"><input type="hidden" name="id" value="{{ n.id }}">
-        <button class="link">{{ 'hide' if n.active else 'show' }}</button></form></li>
-    {% else %}<li class="muted">None yet. Operators' new sheet names appear here.</li>{% endfor %}</ul></div>
+    <h2>Machines, materials, thickness, sheet names</h2>
+    <p>These lists are on the <b>Masters</b> page. Operators can add new items there too; only admin can hide wrong ones.</p>
+    <a class="btn" href="{{ url_for('masters') }}">Open Masters</a>
   </div>
 </div>
 
