@@ -2,14 +2,33 @@
 {% block body %}
 {% macro csrf() %}<input type="hidden" name="csrf" value="{{ csrf_token }}">{% endmacro %}
 {% set admin = me.role == 'admin' %}
-{% macro toggle(kind, item, anchor) %}{% if admin %}
-  <form method="post" class="inline">{{ csrf() }}<input type="hidden" name="action" value="toggle_{{ kind }}"><input type="hidden" name="id" value="{{ item.id }}"><input type="hidden" name="anchor" value="{{ anchor }}">
-    {% if not item.active %}<span class="tag late">hidden</span>{% endif %}
-    <button class="link">{{ 'hide' if item.active else 'show' }}</button></form>{% endif %}{% endmacro %}
+{% macro toggle(kind, item, anchor) %}
+  {% if not item.active %}
+    {% if admin %}<span class="tag late">removed</span>
+    <form method="post" class="inline">{{ csrf() }}<input type="hidden" name="action" value="toggle_{{ kind }}"><input type="hidden" name="id" value="{{ item.id }}"><input type="hidden" name="anchor" value="{{ anchor }}">
+      <button class="link">bring back</button></form>{% endif %}
+  {% elif admin or item.added_by == me.id %}
+    <span class="acts">
+    <form method="post" class="inline" onsubmit="return askName(this, '{{ item.name }}')">{{ csrf() }}<input type="hidden" name="action" value="rename_{{ kind }}"><input type="hidden" name="id" value="{{ item.id }}"><input type="hidden" name="anchor" value="{{ anchor }}"><input type="hidden" name="name">
+      <button class="link" title="Correct the name">✎ edit</button></form>
+    <form method="post" class="inline" onsubmit="return confirm('Remove {{ item.name }} from the list?')">{{ csrf() }}<input type="hidden" name="action" value="remove_{{ kind }}"><input type="hidden" name="id" value="{{ item.id }}"><input type="hidden" name="anchor" value="{{ anchor }}">
+      <button class="link danger" title="Remove from list">✕ remove</button></form>
+    </span>
+  {% endif %}
+{% endmacro %}
 
+<script>
+  function askName(form, current) {
+    const v = prompt('Correct the name. Old entries and their sheet codes will be updated too.', current);
+    if (v === null || !v.trim() || v.trim().toUpperCase() === current) return false;
+    form.elements.name.value = v.trim();
+    return true;
+  }
+</script>
 <h1>Masters</h1>
 <p class="muted">Add new machines, materials, thickness and sheet names here. New items show in the entry form for everyone.
-  {% if admin %}Hidden items no longer show in the entry form; old entries are not changed.{% else %}Ask admin if something was added by mistake.{% endif %}</p>
+  <b>✎ edit</b> corrects a spelling mistake everywhere, old entries too. <b>✕ remove</b> takes it off the list; old entries that used it are kept.
+  {% if not admin %}You can edit or remove items you added yourself; ask admin for others.{% endif %}</p>
 
 <div class="grid2">
   <div class="card" id="machines">
@@ -36,7 +55,7 @@
     <h2>Thickness ({{ thicknesses|length }})</h2>
     <form method="post" class="row">{{ csrf() }}<input type="hidden" name="action" value="add_thickness"><input type="hidden" name="anchor" value="thickness">
       <input name="name" placeholder="e.g. 16G or 2MM" required autocapitalize="characters"><button class="btn">Add thickness</button></form>
-    <div class="scrollbox"><ul class="cols">{% for t in thicknesses %}<li><b>{{ t.name }}</b> {{ toggle('thickness', t, 'thickness') }}</li>{% endfor %}</ul></div>
+    <div class="scrollbox"><ul>{% for t in thicknesses %}<li><b>{{ t.name }}</b> {{ toggle('thickness', t, 'thickness') }}</li>{% endfor %}</ul></div>
     <p class="muted small">Write gauge as 16G, millimetre as 2MM. Thickness goes inside the sheet code.</p>
   </div>
 

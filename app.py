@@ -135,6 +135,9 @@ def close_db(_exc):
 def init_db():
     db = sqlite3.connect(DB_PATH)
     db.executescript(SCHEMA)
+    # older databases: machines did not record who added them
+    if "added_by" not in [r[1] for r in db.execute("PRAGMA table_info(machines)")]:
+        db.execute("ALTER TABLE machines ADD COLUMN added_by INTEGER REFERENCES users(id)")
     if not db.execute("SELECT 1 FROM users WHERE role='admin'").fetchone():
         db.execute(
             "INSERT INTO users(username, full_name, password_hash, role) VALUES (?,?,?,?)",
@@ -469,7 +472,8 @@ def new_entry():
                     db.execute("UPDATE machines SET active=1 WHERE id=?", (existing["id"],))
                     machine = existing
                 else:
-                    cur = db.execute("INSERT INTO machines(name, unit_id) VALUES (?,?)", (new_machine, unit["id"]))
+                    cur = db.execute("INSERT INTO machines(name, unit_id, added_by) VALUES (?,?,?)",
+                                     (new_machine, unit["id"], me["id"]))
                     machine = db.execute("SELECT * FROM machines WHERE id=?", (cur.lastrowid,)).fetchone()
                     added.append(f"machine {new_machine}")
             if remember("materials", material, me["id"]):
@@ -519,6 +523,81 @@ def add_item():
 
 
 # ---------------------------------------------------------------- masters (operators + admin)
+# kind -> (table, column in entries, label, cleaner)
+MASTER_KINDS = {
+    "machine": ("machines", "machine_id", "machine", clean_code),
+    "material": ("materials", "material", "material", clean_code),
+    "thickness": ("thicknesses", "thickness", "thickness", clean_code),
+    "sheet": ("sheet_names", "sheet_name", "sheet name", lambda v: (v or "").strip().upper()),
+}
+
+
+def recompute_codes(where, params):
+    """Rebuild sheet codes (thickness + machine + sheet name) after a rename."""
+    db = get_db()
+    rows = db.execute("SELECT e.id, e.thickness, e.sheet_name, m.name AS machine_name FROM entries e "
+                      f"JOIN machines m ON m.id=e.machine_id WHERE {where}", params).fetchall()
+    for r in rows:
+        db.execute("UPDATE entries SET sheet_code=? WHERE id=?",
+                   (make_sheet_code(r["thickness"], r["machine_name"], r["sheet_name"]), r["id"]))
+    return len(rows)
+
+
+def rename_master(kind, item_id, raw):
+    """Fix a name everywhere, old entries included. If the new name already exists, merge into it."""
+    table, col, label, cleaner = MASTER_KINDS[kind]
+    db = get_db()
+    row = db.execute(f"SELECT * FROM {table} WHERE id=?", (item_id,)).fetchone()
+    new = cleaner(raw)
+    if not row or not clean_code(new):
+        return "error", f"Type the new {label}."
+    old = row["name"]
+    if new == old:
+        return "ok", "No change."
+    if kind == "machine":
+        other = db.execute("SELECT * FROM machines WHERE name=? AND unit_id=? AND id<>?",
+                           (new, row["unit_id"], row["id"])).fetchone()
+        if other:
+            db.execute("UPDATE entries SET machine_id=? WHERE machine_id=?", (other["id"], row["id"]))
+            db.execute("UPDATE machines SET active=1 WHERE id=?", (other["id"],))
+            db.execute("DELETE FROM machines WHERE id=?", (row["id"],))
+            target = other["id"]
+        else:
+            db.execute("UPDATE machines SET name=? WHERE id=?", (new, row["id"]))
+            target = row["id"]
+        n = recompute_codes("e.machine_id=?", (target,))
+    else:
+        ids = [r[0] for r in db.execute(f"SELECT id FROM entries WHERE {col}=?", (old,))]
+        other = db.execute(f"SELECT * FROM {table} WHERE name=? AND id<>?", (new, row["id"])).fetchone()
+        if other:
+            db.execute(f"UPDATE {table} SET active=1 WHERE id=?", (other["id"],))
+            db.execute(f"DELETE FROM {table} WHERE id=?", (row["id"],))
+        else:
+            db.execute(f"UPDATE {table} SET name=? WHERE id=?", (new, row["id"]))
+        db.execute(f"UPDATE entries SET {col}=? WHERE {col}=?", (new, old))
+        n = len(ids)
+        if ids and kind != "material":
+            recompute_codes(f"e.id IN ({','.join('?' * len(ids))})", ids)
+    msg = f"{label.capitalize()} {old} changed to {new}"
+    return "ok", msg + (f" ({n} old entries updated)." if n else ".")
+
+
+def remove_master(kind, item_id):
+    """Delete if never used; if old entries use it, hide it so past records stay correct."""
+    table, col, label, _ = MASTER_KINDS[kind]
+    db = get_db()
+    row = db.execute(f"SELECT * FROM {table} WHERE id=?", (item_id,)).fetchone()
+    if not row:
+        return "error", "Already removed."
+    used = db.execute(f"SELECT COUNT(*) FROM entries WHERE {col}=?",
+                      (row["id"] if kind == "machine" else row["name"],)).fetchone()[0]
+    if used:
+        db.execute(f"UPDATE {table} SET active=0 WHERE id=?", (row["id"],))
+        return "ok", (f"{row['name']} removed from the list. It is used in {used} old entries, "
+                      "so those entries keep it.")
+    db.execute(f"DELETE FROM {table} WHERE id=?", (row["id"],))
+    return "ok", f"{row['name']} removed."
+
 @app.route("/masters", methods=["GET", "POST"])
 @login_required
 def masters():
@@ -541,7 +620,7 @@ def masters():
                     db.execute("UPDATE machines SET active=1 WHERE id=?", (row["id"],))
                     flash(f"{name} is already in {unit['name']}.", "ok")
                 else:
-                    db.execute("INSERT INTO machines(name, unit_id) VALUES (?,?)", (name, unit["id"]))
+                    db.execute("INSERT INTO machines(name, unit_id, added_by) VALUES (?,?,?)", (name, unit["id"], me["id"]))
                     flash(f"Machine {name} added to {unit['name']}.", "ok")
         elif action.startswith("add_") and action[4:] in ITEM_KINDS:
             table, label, cleaner = ITEM_KINDS[action[4:]]
@@ -549,6 +628,16 @@ def masters():
             if clean_code(name):
                 is_new = remember(table, name, me["id"])
                 flash(f"{label.capitalize()} {name} added." if is_new else f"{name} is already in the list.", "ok")
+        elif action.split("_", 1)[0] in ("rename", "remove") and action.split("_", 1)[-1] in MASTER_KINDS:
+            verb, kind = action.split("_", 1)
+            table = MASTER_KINDS[kind][0]
+            row = db.execute(f"SELECT * FROM {table} WHERE id=?", (f.get("id"),)).fetchone()
+            if not row or not (is_admin or row["added_by"] == me["id"]):
+                flash("Only admin (or the person who added it) can change this.", "error")
+            else:
+                cat, msg = (rename_master(kind, row["id"], f.get("name")) if verb == "rename"
+                            else remove_master(kind, row["id"]))
+                flash(msg, cat)
         elif action.startswith("toggle_") and is_admin:
             table = {"machine": "machines", "material": "materials", "thickness": "thicknesses",
                      "sheet": "sheet_names"}.get(action[7:])

@@ -59,3 +59,4 @@ ul { padding-left:18px; } li { margin:4px 0; }
 .pivot tfoot th { background:#f3f4f6; color:var(--ink); font-size:14px; text-transform:none; }
 ul.cols { columns:3 90px; } ul.cols li { break-inside:avoid; }
 input.search { margin:10px 0 0; }
+.acts { white-space:nowrap; margin-left:4px; } .acts .link { font-size:13px; }
