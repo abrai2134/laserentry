@@ -1,0 +1,28 @@
+# Render Blueprint: Dashboard -> New -> Blueprint -> pick this repository.
+# Needs the Starter plan: the free plan has no disk, so all data would be lost on every restart.
+services:
+  - type: web
+    name: laserentry
+    runtime: python
+    plan: starter
+    region: singapore
+    branch: claude/confident-bohr-ju830a
+    buildCommand: pip install -r requirements.txt
+    # one worker: the database is a single file, and the login lockout is kept in memory
+    startCommand: gunicorn wsgi:application --workers 1 --threads 8 --bind 0.0.0.0:$PORT
+    healthCheckPath: /login
+    disk:
+      name: laser-data
+      mountPath: /var/data
+      sizeGB: 1
+    envVars:
+      - key: LASER_DB
+        value: /var/data/laserentry.db
+      - key: LASER_TZ
+        value: Asia/Kolkata
+      - key: LASER_HTTPS
+        value: "1"
+      - key: LASER_SECRET
+        generateValue: true
+      - key: PYTHON_VERSION
+        value: 3.12.8

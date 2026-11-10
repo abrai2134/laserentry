@@ -68,4 +68,19 @@
       </tr>{% endfor %}</tbody>
   </table></div>
 </div>
+
+<div class="card">
+  <h2>Backup / Restore</h2>
+  <p>All data (units, machines, logins, entries) is in one file. Download a backup every week and keep it safe.</p>
+  <a class="btn" href="{{ url_for('backup_download') }}">⬇ Download backup</a>
+  <hr style="border:0;border-top:1px solid var(--line);margin:18px 0">
+  <form method="post" action="{{ url_for('backup_restore') }}" enctype="multipart/form-data"
+        onsubmit="return confirm('This REPLACES ALL current data with the backup file. Continue?')">
+    {{ csrf() }}
+    <label>Restore from a backup file (for example <b>laserentry.db</b> from your office PC)
+      <input type="file" name="file" accept=".db" required></label>
+    <button class="btn danger" style="background:var(--stop);margin-top:8px">⬆ Load backup (replaces all data)</button>
+  </form>
+  <p class="muted small">A copy of the current data is saved on the server before loading.</p>
+</div>
 {% endblock %}

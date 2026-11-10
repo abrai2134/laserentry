@@ -47,6 +47,7 @@ def _secret_key():
 app.config["SECRET_KEY"] = _secret_key()
 app.config["PERMANENT_SESSION_LIFETIME"] = timedelta(hours=14)
 app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
+app.config["MAX_CONTENT_LENGTH"] = 200 * 1024 * 1024     # backup upload limit
 # When hosted online with https, set LASER_HTTPS=1 so the login cookie is only sent over https.
 app.config["SESSION_COOKIE_SECURE"] = os.environ.get("LASER_HTTPS") == "1"
 
@@ -853,6 +854,66 @@ def admin():
                         "LEFT JOIN users u ON u.id=s.added_by ORDER BY s.active DESC, s.name").fetchall()
     return render_template("admin.html", units=units, machines=machines, users=users,
                            materials=materials, sheets=sheets)
+
+
+# ---------------------------------------------------------------- backup / restore
+@app.route("/admin/backup")
+@admin_required
+def backup_download():
+    """Download a consistent copy of the whole database (all units, users, entries)."""
+    import tempfile
+    fd, tmp = tempfile.mkstemp(suffix=".db")
+    os.close(fd)
+    try:
+        dst = sqlite3.connect(tmp)
+        get_db().backup(dst)
+        dst.close()
+        with open(tmp, "rb") as fh:
+            data = fh.read()
+    finally:
+        os.remove(tmp)
+    name = f"laserentry_backup_{now().strftime('%Y%m%d_%H%M')}.db"
+    return Response(data, mimetype="application/octet-stream",
+                    headers={"Content-Disposition": f"attachment; filename={name}"})
+
+
+@app.route("/admin/restore", methods=["POST"])
+@admin_required
+def backup_restore():
+    """Replace ALL data with an uploaded backup file (e.g. laserentry.db from the office PC)."""
+    up = request.files.get("file")
+    if not up or not up.filename:
+        flash("Choose the backup file (.db) first.", "error")
+        return redirect(url_for("admin"))
+    data_dir = os.path.dirname(os.path.abspath(DB_PATH))
+    tmp = os.path.join(data_dir, "restore_upload.tmp")
+    up.save(tmp)
+    try:
+        src = sqlite3.connect(tmp)
+        try:
+            tables = {r[0] for r in src.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+            if not {"users", "entries", "machines", "units"} <= tables:
+                raise ValueError
+            if not src.execute("SELECT 1 FROM users WHERE role='admin' AND active=1").fetchone():
+                flash("That backup has no active admin login, so it was not loaded.", "error")
+                return redirect(url_for("admin"))
+        except (sqlite3.DatabaseError, ValueError):
+            flash("That file is not a Laser Entry backup. Nothing was changed.", "error")
+            return redirect(url_for("admin"))
+        # keep a copy of the current data first, just in case
+        safety = os.path.join(data_dir, f"before_restore_{now().strftime('%Y%m%d_%H%M%S')}.db")
+        keep = sqlite3.connect(safety)
+        get_db().backup(keep)
+        keep.close()
+        src.backup(get_db())
+        src.close()
+    finally:
+        if os.path.exists(tmp):
+            os.remove(tmp)
+    init_db()              # adds any newer tables the old backup does not have
+    session.clear()
+    flash("Backup loaded. Log in again with a login from that backup.", "ok")
+    return redirect(url_for("login"))
 
 
 @app.errorhandler(403)
