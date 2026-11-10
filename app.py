@@ -46,6 +46,9 @@ def _secret_key():
 
 app.config["SECRET_KEY"] = _secret_key()
 app.config["PERMANENT_SESSION_LIFETIME"] = timedelta(hours=14)
+app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
+# When hosted online with https, set LASER_HTTPS=1 so the login cookie is only sent over https.
+app.config["SESSION_COOKIE_SECURE"] = os.environ.get("LASER_HTTPS") == "1"
 
 
 # ---------------------------------------------------------------- database
@@ -245,20 +248,44 @@ def check_csrf():
 
 
 # ---------------------------------------------------------------- auth
+# Stop password guessing: after 8 wrong tries, that username is blocked for 15 minutes.
+MAX_TRIES, BLOCK_MINUTES = 8, 15
+_failed = {}          # username -> [count, first_failure_time]
+
+
+def _blocked(username):
+    rec = _failed.get(username)
+    if rec and now() - rec[1] > timedelta(minutes=BLOCK_MINUTES):
+        _failed.pop(username, None)
+        return False
+    return bool(rec and rec[0] >= MAX_TRIES)
+
+
 @app.route("/login", methods=["GET", "POST"])
 def login():
     if request.method == "POST":
         username = request.form.get("username", "").strip().lower()
+        if _blocked(username):
+            flash(f"Too many wrong passwords. Try again after {BLOCK_MINUTES} minutes "
+                  "or ask admin to reset the password.", "error")
+            return render_template("login.html")
         user = get_db().execute("SELECT * FROM users WHERE username=? AND active=1",
                                 (username,)).fetchone()
-        if user and check_password_hash(user["password_hash"], request.form.get("password", "")):
+        password = request.form.get("password", "")
+        if user and check_password_hash(user["password_hash"], password):
+            _failed.pop(username, None)
             csrf = session.get("csrf")
             session.clear()
             session.permanent = True
             session["uid"] = user["id"]
             session["csrf"] = csrf or secrets.token_hex(16)
+            if user["role"] == "admin" and password == "admin123":
+                flash("You are still using the default password admin123. "
+                      "Change it now from the Password menu.", "error")
             nxt = request.args.get("next", "")
             return redirect(nxt if nxt.startswith("/") and not nxt.startswith("//") else url_for("home"))
+        rec = _failed.setdefault(username, [0, now()])
+        rec[0] += 1
         flash("Wrong username or password.", "error")
     return render_template("login.html")
 
@@ -791,6 +818,9 @@ def admin():
             elif action == "reset_password" and len(f.get("password", "")) >= 4:
                 db.execute("UPDATE users SET password_hash=? WHERE id=?",
                            (generate_password_hash(f["password"]), f["id"]))
+                u = db.execute("SELECT username FROM users WHERE id=?", (f["id"],)).fetchone()
+                if u:
+                    _failed.pop(u["username"], None)
                 flash("Password reset.", "ok")
             elif action == "toggle_user":
                 if int(f["id"]) == current_user()["id"]:

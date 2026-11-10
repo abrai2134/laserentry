@@ -79,5 +79,4 @@ and assign each operator to a unit.
 
 All data is in the single file `laserentry.db`. Back up that file regularly.
 
-To reach it from units in different locations, run it on a cloud server / VPS
-(or any always-on PC with a public address) and open that address from every unit.
+To put it online for all units, follow **DEPLOY_ONLINE.md** (step by step, PythonAnywhere).
