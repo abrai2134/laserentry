@@ -37,7 +37,7 @@ On the entry form an operator can add, without asking admin:
 Operators also have a **Masters** page (top menu) to add machines, materials, thickness
 and sheet names any time. Each item has **edit** (fixes a spelling mistake everywhere, old entries and sheet
 codes included) and **remove** (takes it off the list; if old entries use it they keep it,
-and admin can "bring back"). Admin can edit/remove anything; operators only what they added.
+and admin can "bring back"). Operators can edit/remove too (machines only in their own unit); admin sees a change history of who changed what.
 
 ## Summary (for incentive)
 

@@ -7,7 +7,7 @@
     {% if admin %}<span class="tag late">removed</span>
     <form method="post" class="inline">{{ csrf() }}<input type="hidden" name="action" value="toggle_{{ kind }}"><input type="hidden" name="id" value="{{ item.id }}"><input type="hidden" name="anchor" value="{{ anchor }}">
       <button class="link">bring back</button></form>{% endif %}
-  {% elif admin or item.added_by == me.id %}
+  {% else %}
     <span class="acts">
     <form method="post" class="inline" onsubmit="return askName(this, '{{ item.name }}')">{{ csrf() }}<input type="hidden" name="action" value="rename_{{ kind }}"><input type="hidden" name="id" value="{{ item.id }}"><input type="hidden" name="anchor" value="{{ anchor }}"><input type="hidden" name="name">
       <button class="link" title="Correct the name">✎ edit</button></form>
@@ -28,7 +28,7 @@
 <h1>Masters</h1>
 <p class="muted">Add new machines, materials, thickness and sheet names here. New items show in the entry form for everyone.
   <b>✎ edit</b> corrects a spelling mistake everywhere, old entries too. <b>✕ remove</b> takes it off the list; old entries that used it are kept.
-  {% if not admin %}You can edit or remove items you added yourself; ask admin for others.{% endif %}</p>
+  {% if not admin %}Every change is recorded with your name.{% endif %}</p>
 
 <div class="grid2">
   <div class="card" id="machines">
@@ -68,4 +68,13 @@
     {% else %}<li class="muted">None yet.</li>{% endfor %}</ul></div>
   </div>
 </div>
+
+{% if admin %}
+<h2>Change history (last 50)</h2>
+<div class="tablewrap"><table>
+  <thead><tr><th>When</th><th>Who</th><th>What</th></tr></thead>
+  <tbody>{% for l in log %}<tr><td>{{ l.at|dt }}</td><td>{{ l.full_name or '-' }}</td><td style="white-space:normal">{{ l.text }}</td></tr>
+  {% else %}<tr><td colspan="3" class="muted">No changes yet.</td></tr>{% endfor %}</tbody>
+</table></div>
+{% endif %}
 {% endblock %}

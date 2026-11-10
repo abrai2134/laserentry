@@ -100,6 +100,12 @@ CREATE TABLE IF NOT EXISTS materials (
     added_by INTEGER REFERENCES users(id),
     added_at TEXT
 );
+CREATE TABLE IF NOT EXISTS masters_log (
+    id INTEGER PRIMARY KEY,
+    at TEXT NOT NULL,
+    user_id INTEGER REFERENCES users(id),
+    text TEXT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS thicknesses (
     id INTEGER PRIMARY KEY,
     name TEXT NOT NULL UNIQUE,
@@ -608,6 +614,12 @@ def masters():
     if request.method == "POST":
         f = request.form
         action = f.get("action", "")
+
+        def done(msg, cat="ok", log=True):
+            flash(msg, cat)
+            if cat == "ok" and log:
+                db.execute("INSERT INTO masters_log(at, user_id, text) VALUES (?,?,?)", (now_str(), me["id"], msg))
+
         if action == "add_machine":
             name = clean_code(f.get("name"))
             unit_id = f.get("unit_id") if (is_admin or not me["unit_id"]) else me["unit_id"]
@@ -618,31 +630,36 @@ def masters():
                 row = db.execute("SELECT * FROM machines WHERE name=? AND unit_id=?", (name, unit["id"])).fetchone()
                 if row:
                     db.execute("UPDATE machines SET active=1 WHERE id=?", (row["id"],))
-                    flash(f"{name} is already in {unit['name']}.", "ok")
+                    done(f"{name} is already in {unit['name']}.", log=bool(not row["active"]))
                 else:
                     db.execute("INSERT INTO machines(name, unit_id, added_by) VALUES (?,?,?)", (name, unit["id"], me["id"]))
-                    flash(f"Machine {name} added to {unit['name']}.", "ok")
+                    done(f"Machine {name} added to {unit['name']}.")
         elif action.startswith("add_") and action[4:] in ITEM_KINDS:
             table, label, cleaner = ITEM_KINDS[action[4:]]
             name = cleaner(f.get("name"))
             if clean_code(name):
                 is_new = remember(table, name, me["id"])
-                flash(f"{label.capitalize()} {name} added." if is_new else f"{name} is already in the list.", "ok")
+                done(f"{label.capitalize()} {name} added." if is_new else f"{name} is already in the list.", log=is_new)
         elif action.split("_", 1)[0] in ("rename", "remove") and action.split("_", 1)[-1] in MASTER_KINDS:
             verb, kind = action.split("_", 1)
             table = MASTER_KINDS[kind][0]
             row = db.execute(f"SELECT * FROM {table} WHERE id=?", (f.get("id"),)).fetchone()
-            if not row or not (is_admin or row["added_by"] == me["id"]):
-                flash("Only admin (or the person who added it) can change this.", "error")
+            # operators may change any item, but machines only in their own unit
+            other_unit = (kind == "machine" and not is_admin and me["unit_id"]
+                          and row and row["unit_id"] != me["unit_id"])
+            if not row or other_unit or (not is_admin and not row["active"]):
+                flash("You cannot change this item. Ask admin.", "error")
             else:
                 cat, msg = (rename_master(kind, row["id"], f.get("name")) if verb == "rename"
                             else remove_master(kind, row["id"]))
-                flash(msg, cat)
+                done(msg, cat, log=msg != "No change.")
         elif action.startswith("toggle_") and is_admin:
             table = {"machine": "machines", "material": "materials", "thickness": "thicknesses",
                      "sheet": "sheet_names"}.get(action[7:])
-            if table:
-                db.execute(f"UPDATE {table} SET active=1-active WHERE id=?", (f.get("id"),))
+            row = db.execute(f"SELECT * FROM {table} WHERE id=?", (f.get("id"),)).fetchone() if table else None
+            if row:
+                db.execute(f"UPDATE {table} SET active=1-active WHERE id=?", (row["id"],))
+                done(f"{row['name']} {'brought back' if not row['active'] else 'removed from the list'}.")
         db.commit()
         return redirect(url_for("masters") + "#" + f.get("anchor", ""))
 
@@ -660,7 +677,10 @@ def masters():
     thick = sorted(items("thicknesses"), key=lambda r: (-r["active"], thickness_key(r["name"])))
     return render_template("masters.html", machines=machines, materials=items("materials", "id"),
                            thicknesses=thick, sheets=items("sheet_names"),
-                           units=db.execute("SELECT * FROM units ORDER BY name").fetchall())
+                           units=db.execute("SELECT * FROM units ORDER BY name").fetchall(),
+                           log=db.execute("SELECT l.*, u.full_name FROM masters_log l LEFT JOIN users u "
+                                          "ON u.id=l.user_id ORDER BY l.id DESC LIMIT 50").fetchall()
+                           if is_admin else [])
 
 
 @app.route("/entry/<int:eid>/finish", methods=["POST"])
