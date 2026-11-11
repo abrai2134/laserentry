@@ -19,7 +19,7 @@
     <select name="machine_id" id="machine" required>
       {% if machines|length > 1 %}<option value="">-- select --</option>{% endif %}
       {% for m in machines %}
-        <option value="{{ m.id }}" data-name="{{ m.name }}" {{ 'selected' if form.machine_id == m.id|string }}>
+        <option value="{{ m.id }}" data-name="{{ m.name }}" data-unit="{{ m.unit_id }}" {{ 'selected' if form.machine_id == m.id|string }}>
           {% if me.role == 'admin' or not me.unit_id %}{{ m.unit_name }} / {% endif %}{{ m.name }}</option>
       {% endfor %}
       <option value="new" {{ 'selected' if form.machine_id == 'new' or not machines }}>+ Add new machine</option>
@@ -50,6 +50,7 @@
   </div>
   <datalist id="thk">{% for t in thicknesses %}<option value="{{ t }}">{% endfor %}</datalist>
   <div class="small" id="thkHint"></div>
+  <div class="stockline" id="stockLine"></div>
 
   <label for="sheet">Sheet name</label>
   <div class="row">
@@ -76,6 +77,7 @@
   <button class="btn big {{ 'start' if mode == 'live' }}">{{ '▶ START' if mode == 'live' else 'SAVE ENTRY' }}</button>
 </form>
 <script>
+  const stockMap = {{ stock_map|tojson }};
   const clean = s => (s || '').toUpperCase().replace(/[^A-Z0-9.\-_]/g, '');
   // quick-add boxes: type a new value, press "+ Add", it is saved to the list for everyone
   const quick = [
@@ -102,6 +104,18 @@
     document.getElementById('newMaterialBox').style.display = isNewMat ? 'block' : 'none';
     document.getElementById('newMaterial').required = isNewMat;
     quick.forEach(updQuick);
+    // live stock for the chosen unit + material + thickness
+    let unit = o && o.dataset.unit;
+    if (isNewM) { const us = document.querySelector('[name=new_machine_unit]'); unit = us ? us.value : '{{ me.unit_id or '' }}'; }
+    const matv = isNewMat ? clean(document.getElementById('newMaterial').value) : (mat ? mat.value : '');
+    const thv = clean(document.getElementById('thickness').value);
+    const sl = document.getElementById('stockLine');
+    if (unit && matv && thv) {
+      const bal = stockMap[unit + '|' + matv + '|' + thv];
+      if (bal === undefined) { sl.className = 'stockline'; sl.textContent = 'Stock ' + matv + ' ' + thv + ': not recorded yet'; }
+      else { sl.className = 'stockline ' + (bal <= 0 ? 'neg' : (bal <= {{ low }} ? 'low' : 'ok'));
+             sl.textContent = 'Stock pending ' + matv + ' ' + thv + ': ' + bal + ' sheets (after this cut: ' + (bal - 1) + ')'; }
+    } else { sl.className = 'stockline'; sl.textContent = ''; }
     const mname = isNewM ? document.getElementById('newMachine').value : (o && o.dataset.name);
     const code = clean(document.getElementById('thickness').value) + clean(mname) + clean(document.getElementById('sheet').value);
     document.getElementById('code').textContent = code || '-';

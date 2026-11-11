@@ -14,6 +14,9 @@
   {% else %}<tr><td colspan="6" class="muted">No machine is cutting.</td></tr>{% endfor %}</tbody>
 </table></div>
 
+<h2>Stock pending <a class="small" href="{{ url_for('stock') }}">open stock page</a></h2>
+{% include '_stock_table.html' with context %}
+
 <h2>Machines on {{ day }}</h2>
 <div class="tablewrap"><table>
   <thead><tr><th>Unit</th><th>Machine</th><th>Sheets</th><th>Pcs</th><th>Cutting time</th></tr></thead>

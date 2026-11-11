@@ -100,6 +100,20 @@ CREATE TABLE IF NOT EXISTS materials (
     added_by INTEGER REFERENCES users(id),
     added_at TEXT
 );
+CREATE TABLE IF NOT EXISTS stock_moves (
+    id INTEGER PRIMARY KEY,
+    unit_id INTEGER NOT NULL REFERENCES units(id),
+    material TEXT NOT NULL,
+    thickness TEXT NOT NULL,
+    kind TEXT NOT NULL CHECK(kind IN ('in', 'count')),
+    qty INTEGER NOT NULL,          -- 'in': sheets received; 'count': change made by a physical count
+    counted INTEGER,               -- 'count': the actual number counted
+    remarks TEXT,
+    at TEXT NOT NULL,              -- when the material came / was counted
+    entered_at TEXT NOT NULL,
+    user_id INTEGER REFERENCES users(id)
+);
+CREATE INDEX IF NOT EXISTS idx_stock_key ON stock_moves(unit_id, material, thickness);
 CREATE TABLE IF NOT EXISTS masters_log (
     id INTEGER PRIMARY KEY,
     at TEXT NOT NULL,
@@ -357,7 +371,8 @@ def home():
     today_count = db.execute(
         "SELECT COUNT(*), COALESCE(SUM(qty),0) FROM entries WHERE user_id=? AND substr(cut_start,1,10)=?",
         (me["id"], today)).fetchone()
-    return render_template("home.html", running=running, recent=recent, today_count=today_count)
+    return render_template("home.html", running=running, recent=recent, today_count=today_count,
+                           stock_rows=stock_balances(stock_scope(me)), low=LOW_STOCK)
 
 
 def material_list(active_only=True):
@@ -498,6 +513,8 @@ def new_entry():
                  entered if mode == "manual" else None))
             db.commit()
             flash(f"Saved {code}" + (" - cutting started. Press FINISH when done." if mode == "live" else ""), "ok")
+            left = stock_balance(machine["unit_id"], material, thickness)
+            flash(f"Stock {material} {thickness} pending: {left} sheets.", "ok" if left > LOW_STOCK else "error")
             if added:
                 flash("New " + ", ".join(added) + " added to the list.", "ok")
             return redirect(url_for("home"))
@@ -507,6 +524,9 @@ def new_entry():
                            sheet_names=sheet_name_list(),
                            units=get_db().execute("SELECT * FROM units ORDER BY name").fetchall(),
                            thicknesses=thickness_list(), form=request.form,
+                           low=LOW_STOCK,
+                           stock_map={f"{d['unit_id']}|{d['material']}|{d['thickness']}": d["balance"]
+                                      for d in stock_balances(stock_scope(me))},
                            now_local=now().strftime("%Y-%m-%dT%H:%M"))
 
 
@@ -581,6 +601,8 @@ def rename_master(kind, item_id, raw):
         else:
             db.execute(f"UPDATE {table} SET name=? WHERE id=?", (new, row["id"]))
         db.execute(f"UPDATE entries SET {col}=? WHERE {col}=?", (new, old))
+        if kind in ("material", "thickness"):
+            db.execute(f"UPDATE stock_moves SET {col}=? WHERE {col}=?", (new, old))
         n = len(ids)
         if ids and kind != "material":
             recompute_codes(f"e.id IN ({','.join('?' * len(ids))})", ids)
@@ -951,6 +973,142 @@ def summary_csv():
                     headers={"Content-Disposition": f"attachment; filename={name}"})
 
 
+# ---------------------------------------------------------------- stock
+# Stock = sheets received + physical-count corrections - sheets cut.
+# Every cutting entry uses 1 sheet of its unit / material / thickness (deleting the entry gives it back).
+LOW_STOCK = 5
+
+
+def stock_balances(unit_id=None):
+    db = get_db()
+    today = now().strftime("%Y-%m-%d")
+    where, params = ("WHERE unit_id=?", [unit_id]) if unit_id else ("", [])
+    data = {}
+
+    def row(key):
+        return data.setdefault(key, {"unit_id": key[0], "material": key[1], "thickness": key[2],
+                                     "received": 0, "counted": 0, "used": 0, "used_today": 0})
+    for r in db.execute("SELECT unit_id, material, thickness, "
+                        "SUM(CASE WHEN kind='in' THEN qty ELSE 0 END) AS received, "
+                        "SUM(CASE WHEN kind='count' THEN qty ELSE 0 END) AS counted "
+                        f"FROM stock_moves {where} GROUP BY unit_id, material, thickness", params):
+        d = row((r["unit_id"], r["material"], r["thickness"]))
+        d["received"], d["counted"] = r["received"], r["counted"]
+    for r in db.execute("SELECT unit_id, material, thickness, COUNT(*) AS used, "
+                        "SUM(substr(cut_start,1,10)=?) AS used_today "
+                        f"FROM entries {where} GROUP BY unit_id, material, thickness", [today] + params):
+        d = row((r["unit_id"], r["material"], r["thickness"]))
+        d["used"], d["used_today"] = r["used"], r["used_today"]
+    units = {u["id"]: u["name"] for u in db.execute("SELECT * FROM units")}
+    mat_order = {m["name"]: i for i, m in enumerate(material_list(active_only=False))}
+    out = []
+    for d in data.values():
+        d["balance"] = d["received"] + d["counted"] - d["used"]
+        d["unit_name"] = units.get(d["unit_id"], "?")
+        out.append(d)
+    out.sort(key=lambda d: (d["unit_name"], mat_order.get(d["material"], 999), d["material"],
+                            thickness_key(d["thickness"])))
+    return out
+
+
+def stock_balance(unit_id, material, thickness):
+    for d in stock_balances(unit_id):
+        if d["material"] == material and d["thickness"] == thickness:
+            return d["balance"]
+    return 0
+
+
+def stock_scope(me):
+    """Operators see their own unit's stock; admin (or an operator without a unit) sees all."""
+    return None if (me["role"] == "admin" or not me["unit_id"]) else me["unit_id"]
+
+
+@app.route("/stock", methods=["GET", "POST"])
+@login_required
+def stock():
+    me = current_user()
+    is_admin = me["role"] == "admin"
+    db = get_db()
+    if request.method == "POST":
+        f = request.form
+        action = f.get("action")
+        unit_id = f.get("unit_id") if (is_admin or not me["unit_id"]) else me["unit_id"]
+        unit = db.execute("SELECT * FROM units WHERE id=?", (unit_id,)).fetchone() if unit_id else None
+        material = clean_code(f.get("material"))
+        thickness = clean_code(f.get("thickness"))
+        when = parse_dt(f.get("at") or "") or now()
+        try:
+            qty = int(f.get("qty") or "")
+        except ValueError:
+            qty = None
+        if action in ("in", "count"):
+            if not unit or not material or not thickness:
+                flash("Choose unit, material and thickness.", "error")
+            elif action == "in" and (qty is None or qty < 1):
+                flash("Enter how many sheets came (1 or more).", "error")
+            elif action == "count" and not is_admin:
+                abort(403)
+            elif action == "count" and (qty is None or qty < 0):
+                flash("Enter the counted number of sheets (0 or more).", "error")
+            else:
+                remember("materials", material, me["id"])
+                remember("thicknesses", thickness, me["id"])
+                if action == "in":
+                    db.execute("INSERT INTO stock_moves(unit_id, material, thickness, kind, qty, remarks, at, "
+                               "entered_at, user_id) VALUES (?,?,?,?,?,?,?,?,?)",
+                               (unit["id"], material, thickness, "in", qty, f.get("remarks", "").strip(),
+                                when.strftime(TS_FMT), now_str(), me["id"]))
+                    db.commit()
+                    flash(f"Received {qty} sheets {material} {thickness} at {unit['name']}. "
+                          f"Stock now {stock_balance(unit['id'], material, thickness)}.", "ok")
+                else:
+                    current = stock_balance(unit["id"], material, thickness)
+                    db.execute("INSERT INTO stock_moves(unit_id, material, thickness, kind, qty, counted, remarks, "
+                               "at, entered_at, user_id) VALUES (?,?,?,?,?,?,?,?,?,?)",
+                               (unit["id"], material, thickness, "count", qty - current, qty,
+                                f.get("remarks", "").strip() or "Physical count", when.strftime(TS_FMT),
+                                now_str(), me["id"]))
+                    db.commit()
+                    flash(f"{material} {thickness} at {unit['name']} set to {qty} sheets "
+                          f"(system showed {current}, change {qty - current:+d}).", "ok")
+        elif action == "delete" and is_admin:
+            db.execute("DELETE FROM stock_moves WHERE id=?", (f.get("id"),))
+            db.commit()
+            flash("Stock record deleted. Balance recalculated.", "ok")
+        return redirect(url_for("stock", unit=request.args.get("unit", "")))
+
+    scope = stock_scope(me)
+    unit_filter = request.args.get("unit") if scope is None else scope
+    rows = stock_balances(int(unit_filter) if unit_filter else None)
+    mwhere, mparams = ("WHERE s.unit_id=?", [unit_filter]) if unit_filter else ("", [])
+    moves = db.execute("SELECT s.*, u.name AS unit_name, us.full_name FROM stock_moves s "
+                       "JOIN units u ON u.id=s.unit_id LEFT JOIN users us ON us.id=s.user_id "
+                       f"{mwhere} ORDER BY s.at DESC, s.id DESC LIMIT 100", mparams).fetchall()
+    return render_template("stock.html", rows=rows, moves=moves, low=LOW_STOCK, unit_filter=str(unit_filter or ""),
+                           units=db.execute("SELECT * FROM units ORDER BY name").fetchall(),
+                           materials=[m["name"] for m in material_list()], thicknesses=thickness_list(),
+                           now_local=now().strftime("%Y-%m-%dT%H:%M"))
+
+
+@app.route("/stock.csv")
+@login_required
+def stock_csv():
+    me = current_user()
+    scope = stock_scope(me)
+    unit_filter = request.args.get("unit") if scope is None else scope
+    out = io.StringIO()
+    w = csv.writer(out)
+    w.writerow([f"Sheet stock on {now().strftime('%d-%m-%Y %I:%M %p')}"])
+    w.writerow(["Unit", "Material", "Thickness", "Received", "Count corrections", "Used (cut)",
+                "Used today", "Stock pending"])
+    for d in stock_balances(int(unit_filter) if unit_filter else None):
+        w.writerow([d["unit_name"], d["material"], d["thickness"], d["received"], d["counted"],
+                    d["used"], d["used_today"], d["balance"]])
+    name = f"laser_stock_{now().strftime('%Y%m%d_%H%M')}.csv"
+    return Response("\ufeff" + out.getvalue(), mimetype="text/csv",
+                    headers={"Content-Disposition": f"attachment; filename={name}"})
+
+
 @app.route("/dashboard")
 @admin_required
 def dashboard():
@@ -978,6 +1136,7 @@ def dashboard():
         "AND (julianday(e.entered_at)-julianday(e.cut_end))*1440 > 60 "
         "ORDER BY e.entered_at DESC", (day,)).fetchall()
     return render_template("dashboard.html", day=day, by_machine=by_machine,
+                           stock_rows=stock_balances(), low=LOW_STOCK,
                            by_operator=by_operator, running=running, late=late,
                            now_ts=now_str())
 

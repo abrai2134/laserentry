@@ -1,0 +1,13 @@
+{# needs: stock_rows, low; optional: full (bool) #}
+{% set multi = (stock_rows|map(attribute='unit_id')|unique|list|length) > 1 %}
+<div class="tablewrap"><table class="stock">
+  <thead><tr>{% if multi %}<th>Unit</th>{% endif %}<th>Mat.</th><th>Thk</th>
+    {% if full %}<th class="num">Received</th><th class="num">Count corr.</th><th class="num">Used (cut)</th>{% endif %}
+    <th class="num">Used today</th><th class="num">Pending</th></tr></thead>
+  <tbody>{% for d in stock_rows %}
+    <tr>{% if multi %}<td>{{ d.unit_name }}</td>{% endif %}<td><b>{{ d.material }}</b></td><td><b>{{ d.thickness }}</b></td>
+      {% if full %}<td class="num">{{ d.received }}</td><td class="num">{{ '%+d'|format(d.counted) if d.counted else '-' }}</td><td class="num">{{ d.used }}</td>{% endif %}
+      <td class="num">{{ d.used_today or '-' }}</td>
+      <td class="num"><span class="bal {{ 'neg' if d.balance < 0 else ('low' if d.balance <= low else 'ok') }}">{{ d.balance }}</span></td></tr>
+  {% else %}<tr><td colspan="8" class="muted">No stock recorded yet. Add material received on the Stock page.</td></tr>{% endfor %}</tbody>
+</table></div>

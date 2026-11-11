@@ -27,6 +27,9 @@
 {% endfor %}
 {% endif %}
 
+<h2>Stock pending{% if me.unit_name %} at {{ me.unit_name }}{% endif %} <a class="small" href="{{ url_for('stock') }}">+ material received</a></h2>
+{% include '_stock_table.html' with context %}
+
 <h2>My last entries</h2>
 {% include '_table.html' with context %}
 {% endblock %}

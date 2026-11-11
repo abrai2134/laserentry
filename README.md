@@ -47,6 +47,15 @@ qty and cutting time, plus a day-wise table for the week or month.
 Filter by unit, machine or material and download it as Excel (CSV).
 Only finished sheets are counted. Operators see their own summary only.
 
+## Sheet stock
+
+Menu **Stock**: record **material received** (material, thickness, no. of sheets, challan).
+Every cutting entry uses 1 sheet of that unit's stock (deleting an entry gives it back).
+Stock pending shows on the operator home page, on the entry form (live, for the chosen
+material + thickness), on the admin dashboard, and on the Stock page with Excel download.
+Admin sets **opening stock / physical count**: enter the counted sheets and the stock is
+set to that number. Red = 0 or below, orange = 5 or less.
+
 ## Who sees what
 
 - **Operator**: sees only machines of their own unit and only their own entries.

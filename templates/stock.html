@@ -1,0 +1,68 @@
+{% extends 'base.html' %}
+{% block body %}
+{% macro csrf() %}<input type="hidden" name="csrf" value="{{ csrf_token }}">{% endmacro %}
+{% set admin = me.role == 'admin' %}
+{% set pick_unit = admin or not me.unit_id %}
+<h1>Sheet stock{% if not pick_unit %} · {{ me.unit_name }}{% endif %}</h1>
+<p class="muted">Stock pending = sheets received − sheets cut (each cutting entry uses 1 sheet){% if admin %} ± physical-count corrections{% endif %}.
+  Red = finished or below zero, orange = {{ low }} or less.</p>
+
+<datalist id="mats">{% for m in materials %}<option value="{{ m }}">{% endfor %}</datalist>
+<datalist id="thks">{% for t in thicknesses %}<option value="{{ t }}">{% endfor %}</datalist>
+
+<div class="grid2">
+  <form class="card" method="post">{{ csrf() }}<input type="hidden" name="action" value="in">
+    <h2>⬇ Material received</h2>
+    {% if pick_unit %}<label>Unit <select name="unit_id" required>{% for u in units %}<option value="{{ u.id }}" {{ 'selected' if unit_filter == u.id|string }}>{{ u.name }}</option>{% endfor %}</select></label>{% endif %}
+    <div class="grid2 tight">
+      <label>Material <input name="material" list="mats" required autocapitalize="characters" placeholder="MS"></label>
+      <label>Thickness <input name="thickness" list="thks" required autocapitalize="characters" placeholder="16G"></label>
+    </div>
+    <div class="grid2 tight">
+      <label>No. of sheets <input name="qty" type="number" min="1" inputmode="numeric" required></label>
+      <label>Received on <input type="datetime-local" name="at" value="{{ now_local }}"></label>
+    </div>
+    <label>Challan / supplier (optional) <input name="remarks" placeholder="e.g. Challan 1234, ABC Steels"></label>
+    <button class="btn big start">Add to stock</button>
+  </form>
+
+  {% if admin %}
+  <form class="card" method="post" onsubmit="return confirm('Set stock to the counted number?')">{{ csrf() }}<input type="hidden" name="action" value="count">
+    <h2>🔢 Opening stock / physical count</h2>
+    <p class="muted small">Count the sheets actually lying in the unit and enter that number. The system sets the stock to it.
+      Use this once at the start for each material, and whenever the count does not match.</p>
+    <label>Unit <select name="unit_id" required>{% for u in units %}<option value="{{ u.id }}" {{ 'selected' if unit_filter == u.id|string }}>{{ u.name }}</option>{% endfor %}</select></label>
+    <div class="grid2 tight">
+      <label>Material <input name="material" list="mats" required autocapitalize="characters" placeholder="MS"></label>
+      <label>Thickness <input name="thickness" list="thks" required autocapitalize="characters" placeholder="16G"></label>
+    </div>
+    <div class="grid2 tight">
+      <label>Counted sheets <input name="qty" type="number" min="0" inputmode="numeric" required></label>
+      <label>Counted on <input type="datetime-local" name="at" value="{{ now_local }}"></label>
+    </div>
+    <label>Note (optional) <input name="remarks" placeholder="Opening stock"></label>
+    <button class="btn big alt">Set stock</button>
+  </form>
+  {% endif %}
+</div>
+
+<form class="filters" method="get">
+  {% if pick_unit %}<label>Unit <select name="unit" onchange="this.form.submit()"><option value="">All units</option>{% for u in units %}<option value="{{ u.id }}" {{ 'selected' if unit_filter == u.id|string }}>{{ u.name }}</option>{% endfor %}</select></label>{% endif %}
+  <a class="btn alt" href="{{ url_for('stock_csv', unit=unit_filter) }}">Download Excel (CSV)</a>
+</form>
+<h2>Stock pending</h2>
+{% set stock_rows = rows %}{% set full = true %}
+{% include '_stock_table.html' with context %}
+
+<h2>Received &amp; count history (last 100)</h2>
+<div class="tablewrap"><table>
+  <thead><tr><th>Date</th>{% if pick_unit %}<th>Unit</th>{% endif %}<th>Material</th><th>Thk</th><th>Type</th><th class="num">Sheets</th><th>Challan / note</th><th>By</th>{% if admin %}<th></th>{% endif %}</tr></thead>
+  <tbody>{% for m in moves %}
+    <tr><td>{{ m.at|dt }}</td>{% if pick_unit %}<td>{{ m.unit_name }}</td>{% endif %}<td>{{ m.material }}</td><td>{{ m.thickness }}</td>
+      <td>{% if m.kind == 'in' %}<span class="tag ok">received</span>{% else %}<span class="tag run">count</span>{% endif %}</td>
+      <td class="num">{% if m.kind == 'in' %}+{{ m.qty }}{% else %}{{ m.counted }} <span class="muted small">({{ '%+d'|format(m.qty) }})</span>{% endif %}</td>
+      <td style="white-space:normal">{{ m.remarks or '' }}</td><td>{{ m.full_name or '' }}</td>
+      {% if admin %}<td><form method="post" class="inline" onsubmit="return confirm('Delete this stock record? Balance will be recalculated.')">{{ csrf() }}<input type="hidden" name="action" value="delete"><input type="hidden" name="id" value="{{ m.id }}"><button class="link danger">delete</button></form></td>{% endif %}</tr>
+  {% else %}<tr><td colspan="9" class="muted">Nothing yet.</td></tr>{% endfor %}</tbody>
+</table></div>
+{% endblock %}
