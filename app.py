@@ -225,6 +225,11 @@ def fmt_minutes(m):
 app.jinja_env.globals.update(fmt_minutes=fmt_minutes, minutes_between=minutes_between)
 
 
+@app.template_filter("secs")
+def secs_filter(value):
+    return int(datetime.strptime(value, TS_FMT).timestamp()) if value else 0
+
+
 @app.template_filter("dt")
 def dt_filter(value):
     if not value:
@@ -485,6 +490,27 @@ def new_entry():
             for msg in errors:
                 flash(msg, "error")
         else:
+            # stop double entries (e.g. START pressed twice on a slow phone): lock, then check
+            db.execute("BEGIN IMMEDIATE")
+            dup = None
+            if machine and mode == "live":
+                busy = db.execute(
+                    "SELECT e.sheet_code, e.cut_start, us.full_name FROM entries e JOIN users us ON us.id=e.user_id "
+                    "WHERE e.machine_id=? AND e.cut_end IS NULL", (machine["id"],)).fetchone()
+                if busy:
+                    dup = (f"{machine['name']} is already cutting {busy['sheet_code']} (started by "
+                           f"{busy['full_name']} at {dt_filter(busy['cut_start'])}). "
+                           "Press FINISH on it first. No new entry was saved.")
+            elif machine:
+                if db.execute("SELECT 1 FROM entries WHERE user_id=? AND machine_id=? AND material=? AND thickness=? "
+                              "AND sheet_name=? AND cut_start=? AND cut_end=?",
+                              (me["id"], machine["id"], material, thickness, sheet_name.upper(),
+                               cut_start, cut_end)).fetchone():
+                    dup = "This same entry is already saved. No new entry was saved."
+            if dup:
+                db.rollback()
+                flash(dup, "error")
+                return redirect(url_for("home"))
             added = []
             if new_machine:
                 existing = db.execute("SELECT * FROM machines WHERE name=? AND unit_id=?",
@@ -1135,7 +1161,15 @@ def dashboard():
         "JOIN users us ON us.id=e.user_id WHERE e.mode='manual' AND substr(e.cut_start,1,10)=? "
         "AND (julianday(e.entered_at)-julianday(e.cut_end))*1440 > 60 "
         "ORDER BY e.entered_at DESC", (day,)).fetchall()
-    return render_template("dashboard.html", day=day, by_machine=by_machine,
+    doubles = db.execute(
+        "SELECT a.id AS id1, b.id AS id2, a.sheet_code, a.cut_start AS start1, b.cut_start AS start2, "
+        "a.entered_at AS ent1, b.entered_at AS ent2, m.name AS machine_name, un.name AS unit_name, "
+        "us.full_name AS operator FROM entries a JOIN entries b ON b.machine_id=a.machine_id "
+        "AND b.sheet_code=a.sheet_code AND b.id>a.id "
+        "AND abs(julianday(b.cut_start)-julianday(a.cut_start))*1440 <= 2 "
+        "JOIN machines m ON m.id=a.machine_id JOIN units un ON un.id=a.unit_id JOIN users us ON us.id=a.user_id "
+        "WHERE substr(a.cut_start,1,10)=? ORDER BY a.cut_start", (day,)).fetchall()
+    return render_template("dashboard.html", day=day, by_machine=by_machine, doubles=doubles,
                            stock_rows=stock_balances(), low=LOW_STOCK,
                            by_operator=by_operator, running=running, late=late,
                            now_ts=now_str())

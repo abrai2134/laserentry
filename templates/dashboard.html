@@ -33,6 +33,19 @@
   {% else %}<tr><td colspan="4" class="muted">No entries.</td></tr>{% endfor %}</tbody>
 </table></div>
 
+<h2>Possible double entries ({{ doubles|length }})</h2>
+<p class="muted small">Same machine and same sheet code started within 2 minutes of each other, usually START pressed twice. Delete the extra one.</p>
+<div class="tablewrap"><table>
+  <thead><tr><th>Sheet code</th><th>Unit</th><th>Machine</th><th>Operator</th><th>Entry 1 saved at</th><th>Entry 2 saved at</th><th>Gap</th><th></th></tr></thead>
+  <tbody>{% for d in doubles %}
+    <tr><td class="code">{{ d.sheet_code }}</td><td>{{ d.unit_name }}</td><td>{{ d.machine_name }}</td><td>{{ d.operator }}</td>
+      <td>{{ d.ent1[11:] }}</td><td>{{ d.ent2[11:] }}</td>
+      <td>{% set g = ((d.ent2|secs) - (d.ent1|secs))|abs %}<span class="tag late">{{ g }} sec</span></td>
+      <td><form method="post" action="{{ url_for('cancel_entry', eid=d.id2) }}" onsubmit="return confirm('Delete the second entry of {{ d.sheet_code }}?')">
+        <input type="hidden" name="csrf" value="{{ csrf_token }}"><button class="link danger">delete extra entry</button></form></td></tr>
+  {% else %}<tr><td colspan="8" class="muted">None.</td></tr>{% endfor %}</tbody>
+</table></div>
+
 <h2>Late entries (typed more than 1 hour after cutting)</h2>
 <div class="tablewrap"><table>
   <thead><tr><th>Sheet code</th><th>Unit</th><th>Operator</th><th>Cut end</th><th>Entered at</th><th>Delay</th></tr></thead>

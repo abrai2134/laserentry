@@ -38,5 +38,24 @@
   {% endfor %}
   {% block body %}{% endblock %}
 </main>
+<script>
+  // one press = one save: after a form is sent, its buttons are locked so a second tap does nothing
+  document.addEventListener('submit', function (e) {
+    if (e.defaultPrevented) return;
+    const f = e.target;
+    if (f.dataset.sent) { e.preventDefault(); return; }
+    f.dataset.sent = '1';
+    f.querySelectorAll('button').forEach(function (b) {
+      b.disabled = true;
+      if (b.classList.contains('big')) b.textContent = 'Saving... please wait';
+    });
+  });
+  // coming back with the browser Back button: unlock the form again
+  window.addEventListener('pageshow', function () {
+    document.querySelectorAll('form[data-sent]').forEach(function (f) {
+      delete f.dataset.sent; f.querySelectorAll('button').forEach(function (b) { b.disabled = false; });
+    });
+  });
+</script>
 </body>
 </html>
