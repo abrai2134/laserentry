@@ -52,7 +52,10 @@ Only finished sheets are counted. Operators see their own summary only.
 Menu **Bending** (and the purple button on the operator home page): operator enters
 **machine** (same list as laser entries), **model** and **quantity** (pick a model or type a new one and press "+ Add"); the entry
 time is recorded automatically and "bent at" can be changed for work done earlier.
-Daily / weekly / monthly qty per operator and model, Excel download. Models are
+Each entry has a status: **Given to bending (IN)** or **Out from bending (DONE)**.
+Pending in bending = all IN - all OUT per unit and model, shown on the Bending page and
+the admin Dashboard. Daily / weekly / monthly finished (OUT) qty per operator and model,
+Excel download. Models are
 managed on the Masters page (edit / remove like other lists).
 
 ## Sheet stock

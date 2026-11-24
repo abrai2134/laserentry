@@ -8,6 +8,11 @@
 <form class="card" method="post" id="bf">{{ csrf() }}
   <h2>✚ New bending entry</h2>
   <p class="muted small">Entry time is recorded automatically.</p>
+  <label>Status</label>
+  <div class="statuspick">
+    <label class="chip st-in"><input type="radio" name="status" value="in" required><span>⬇ Given to bending (IN)</span></label>
+    <label class="chip st-out"><input type="radio" name="status" value="out" required><span>✔ Out from bending (DONE)</span></label>
+  </div>
   {% if machines %}
   <label>Machine
     <select name="machine_id" required>
@@ -25,7 +30,7 @@
   <div class="small" id="modelHint"></div>
   <div class="grid2 tight">
     <label>Quantity (pcs) <input name="qty" type="number" min="1" inputmode="numeric" required></label>
-    <label>Bent at <input type="datetime-local" name="done_at" value="{{ now_local }}" max="{{ now_local }}"></label>
+    <label>Date / time <input type="datetime-local" name="done_at" value="{{ now_local }}" max="{{ now_local }}"></label>
   </div>
   <label>Remarks (optional) <input name="remarks"></label>
   <button class="btn big start">SAVE BENDING</button>
@@ -50,8 +55,12 @@
   <a class="btn" href="{{ url_for('bending_csv', period=b.period, date=b.date, **q) }}">Download Excel (CSV)</a>
 </form>
 
-<h2>{{ b.label }} · {{ b.grand }} pcs</h2>
-<h2>Qty by operator and model</h2>
+<h2>{{ b.label }} · given {{ b.given_total }} pcs · out {{ b.grand }} pcs</h2>
+
+<h2>Model status (pending in bending)</h2>
+{% set bend_rows = b.status_rows %}{% include '_bend_status.html' with context %}
+
+<h2>Out from bending (finished) qty by operator and model</h2>
 <div class="tablewrap"><table class="pivot">
   <thead><tr><th>Operator</th>{% if admin %}<th>Unit</th>{% endif %}{% for m in b.models %}<th class="num">{{ m }}</th>{% endfor %}<th class="num tot">Total qty</th></tr></thead>
   <tbody>{% for o in b.operators %}
@@ -64,13 +73,13 @@
 
 <h2>Entries</h2>
 <div class="tablewrap"><table>
-  <thead><tr><th>Model</th><th class="num">Qty</th><th>Machine</th>{% if admin %}<th>Operator</th><th>Unit</th>{% endif %}<th>Bent at</th><th>Entered at</th><th>Remarks</th><th></th></tr></thead>
+  <thead><tr><th>Status</th><th>Model</th><th class="num">Qty</th><th>Machine</th>{% if admin %}<th>Operator</th><th>Unit</th>{% endif %}<th>Date / time</th><th>Entered at</th><th>Remarks</th><th></th></tr></thead>
   <tbody>{% for r in b.rows %}
-    <tr><td><b>{{ r.model }}</b></td><td class="num">{{ r.qty }}</td><td>{{ r.machine_name or '-' }}</td>{% if admin %}<td>{{ r.operator }}</td><td>{{ r.unit_name or '' }}</td>{% endif %}
+    <tr><td>{% if r.status == 'in' %}<span class="tag run">given IN</span>{% else %}<span class="tag ok">out DONE</span>{% endif %}</td><td><b>{{ r.model }}</b></td><td class="num">{{ r.qty }}</td><td>{{ r.machine_name or '-' }}</td>{% if admin %}<td>{{ r.operator }}</td><td>{{ r.unit_name or '' }}</td>{% endif %}
       <td>{{ r.done_at|dt }}</td><td>{{ r.entered_at|dt }}</td><td style="white-space:normal">{{ r.remarks or '' }}</td>
       <td>{% if admin or (r.user_id == me.id and r.entered_at[:10] == today) %}
         <form method="post" class="inline" onsubmit="return confirm('Delete {{ r.model }} x {{ r.qty }}?')">{{ csrf() }}<input type="hidden" name="action" value="delete"><input type="hidden" name="id" value="{{ r.id }}"><button class="link danger">delete</button></form>{% endif %}</td></tr>
-  {% else %}<tr><td colspan="9" class="muted">No entries.</td></tr>{% endfor %}</tbody>
+  {% else %}<tr><td colspan="10" class="muted">No entries.</td></tr>{% endfor %}</tbody>
 </table></div>
 
 <script>
