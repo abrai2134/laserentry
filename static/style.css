@@ -95,3 +95,5 @@ tr.justsaved td { background:#dcfce7; }
 .outform label { display:flex; align-items:center; gap:6px; margin:0; font-weight:600; }
 @media (max-width:620px) { .outform { width:100%; } .outform .btn { flex:1; } .outform label { width:100%; } .outform select { flex:1; } }
 .flash.loaders { background:#1e3a8a; color:#fff; font-size:22px; font-weight:800; padding:16px; text-align:center; }
+.outform input.outqty { width:72px; margin:0; padding:6px 8px; font-weight:700; }
+@media (max-width:620px) { .outform label:has(.outqty) { width:auto; } }

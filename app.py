@@ -1333,31 +1333,50 @@ def bending_data(args, me):
 @app.route("/bending/<int:bid>/out", methods=["POST"])
 @login_required
 def bending_out(bid):
-    """OUT button on a 'Given to bending' line: bending finished, record time and destination unit."""
+    """OUT / without-bending button on a 'Given to bending' line. The qty can be less than given:
+    then that part is recorded as out and the rest stays in bending on the same line."""
     me = current_user()
     db = get_db()
-    row = db.execute("SELECT * FROM bending WHERE id=?", (bid,)).fetchone()
     to_unit = db.execute("SELECT * FROM units WHERE id=?", (request.form.get("to_unit_id"),)).fetchone()
     back = request.form.get("back") or url_for("bending")
     kind = "direct" if request.args.get("kind") == "direct" else "out"
+    db.execute("BEGIN IMMEDIATE")              # two people pressing OUT on the same line at once
+    row = db.execute("SELECT * FROM bending WHERE id=?", (bid,)).fetchone()
+    try:
+        qty = int(request.form.get("out_qty") or (row["qty"] if row else 0))
+    except ValueError:
+        qty = 0
     if not row or row["status"] != "in":
+        db.rollback()
         abort(404)
     if me["role"] != "admin" and me["unit_id"] and row["unit_id"] != me["unit_id"]:
-        flash("This entry belongs to another unit.", "error")
+        msg = ("This entry belongs to another unit.", "error")
     elif row["out_at"]:
-        flash("Already marked OUT.", "error")
+        msg = ("Already marked OUT.", "error")
     elif not to_unit:
-        flash("Select to which unit it is sent, then press OUT.", "error")
+        msg = ("Select to which unit it is sent, then press OUT.", "error")
+    elif qty < 1 or qty > row["qty"]:
+        msg = (f"OUT qty must be between 1 and {row['qty']}.", "error")
     else:
         t = now_str()
-        db.execute("UPDATE bending SET out_at=?, out_by=?, to_unit_id=?, out_kind=? WHERE id=? AND out_at IS NULL",
-                   (t, me["id"], to_unit["id"], kind, bid))
-        db.commit()
-        if kind == "direct":
-            flash(f"Sent without bending: {row['qty']} pcs ({row['person'] or ''}) to {to_unit['name']}.", "ok")
+        left = row["qty"] - qty
+        if left:
+            # split: the part going out becomes its own line, the rest stays waiting on this line
+            db.execute("INSERT INTO bending(user_id, unit_id, machine_id, model, qty, status, person, remarks, done_at, "
+                       "entered_at, out_at, out_by, to_unit_id, out_kind) VALUES (?,?,?,?,?,'in',?,?,?,?,?,?,?,?)",
+                       (row["user_id"], row["unit_id"], row["machine_id"], row["model"] or "", qty, row["person"],
+                        row["remarks"], row["done_at"], row["entered_at"], t, me["id"], to_unit["id"], kind))
+            db.execute("UPDATE bending SET qty=? WHERE id=?", (left, bid))
         else:
-            flash(f"OUT from bending: {row['qty']} pcs ({row['person'] or ''}) sent to {to_unit['name']}. "
-                  f"Bending took {fmt_minutes(minutes_between(row['done_at'], t))}.", "ok")
+            db.execute("UPDATE bending SET out_at=?, out_by=?, to_unit_id=?, out_kind=? WHERE id=?",
+                       (t, me["id"], to_unit["id"], kind, bid))
+        txt = (f"Sent without bending: {qty} pcs ({row['person'] or ''}) to {to_unit['name']}."
+               if kind == "direct" else
+               f"OUT from bending: {qty} pcs ({row['person'] or ''}) sent to {to_unit['name']}. "
+               f"Bending took {fmt_minutes(minutes_between(row['done_at'], t))}.")
+        msg = (txt + (f" {left} pcs still in bending." if left else ""), "ok")
+    db.commit()
+    flash(*msg)
     return redirect(back)
 
 

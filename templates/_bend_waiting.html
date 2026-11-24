@@ -13,9 +13,11 @@
       <input type="hidden" name="csrf" value="{{ csrf_token }}"><input type="hidden" name="back" value="{{ request.full_path }}">
       <label class="small">Send to
         <select name="to_unit_id" required>{% for u in units %}<option value="{{ u.id }}" {{ 'selected' if u.id == r.unit_id }}>{{ u.name }}</option>{% endfor %}</select></label>
-      <button class="btn outbtn" onclick="return confirm('Bending finished? Mark {{ r.qty }} pcs OUT now?')">✔ OUT</button>
+      <label class="small">Qty
+        <input type="number" name="out_qty" class="outqty" min="1" max="{{ r.qty }}" value="{{ r.qty }}" required inputmode="numeric"></label>
+      <button class="btn outbtn" onclick="return confirm('Bending finished? Mark ' + this.form.out_qty.value + ' of {{ r.qty }} pcs OUT now?')">✔ OUT</button>
       <button class="btn directbtn" formaction="{{ url_for('bending_out', bid=r.id, kind='direct') }}"
-              onclick="return confirm('Send {{ r.qty }} pcs WITHOUT bending?')">➜ Without bending</button>
+              onclick="return confirm('Send ' + this.form.out_qty.value + ' of {{ r.qty }} pcs WITHOUT bending?')">➜ Without bending</button>
     </form>
   </div>
 {% else %}
