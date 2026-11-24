@@ -86,16 +86,22 @@
 <h2>⏳ In bending now ({{ waiting|length }}) - press OUT when finished</h2>
 {% include '_bend_waiting.html' with context %}
 
-<h2>Out from bending ({{ b.out_list|length }} lots, {{ b.grand }} pcs)</h2>
+<h2>Out from bending: {{ b.grand }} pcs · sent without bending: {{ b.direct_total }} pcs</h2>
 <div class="tablewrap"><table>
-  <thead><tr><th>OUT at</th><th class="num">Qty</th><th>Bending person</th><th>Machine</th><th>From → To unit</th><th>Given at</th><th>Bending time</th></tr></thead>
+  <thead><tr><th>Out at</th><th>Type</th><th class="num">Out qty</th><th class="num">Of lot given</th><th class="num">Still in bending</th><th>Bending person</th><th>Machine</th><th>From → To unit</th><th>Given at</th><th>Bending time</th></tr></thead>
   <tbody>{% for r in b.out_list %}
-    <tr><td>{{ (r.out_at or r.done_at)|dt }}</td><td class="num"><b>{{ r.qty }}</b></td><td><b>{{ r.person_name }}</b></td><td>{{ r.machine_name or '-' }}</td>
+    <tr><td>{{ r.when|dt }}</td>
+      <td>{% if r.kind == 'direct' %}<span class="tag direct">without bending</span>{% else %}<span class="tag ok">out DONE</span>{% endif %}</td>
+      <td class="num"><b>{{ r.qty }}</b></td>
+      <td class="num">{% if r.lot_qty %}{% if r.lot_qty != r.qty %}<span class="tag late">{{ r.qty }} of {{ r.lot_qty }}</span>{% else %}{{ r.lot_qty }}{% endif %}{% else %}-{% endif %}</td>
+      <td class="num">{% if r.lot_waiting %}<span class="bal low">{{ r.lot_waiting }}</span>{% else %}-{% endif %}</td>
+      <td><b>{{ r.person_name }}</b></td><td>{{ r.machine_name or '-' }}</td>
       <td>{{ r.unit_name or '-' }} → <b>{{ r.to_unit_name or '-' }}</b></td>
       <td>{{ r.done_at|dt if r.out_at else '-' }}</td>
-      <td>{% if r.out_at %}<span class="tag ok">{{ fmt_minutes(minutes_between(r.done_at, r.out_at)) }}</span>{% else %}-{% endif %}</td></tr>
-  {% else %}<tr><td colspan="7" class="muted">Nothing came out of bending in this period.</td></tr>{% endfor %}</tbody>
+      <td>{% if r.out_at and r.kind != 'direct' %}<span class="tag ok">{{ fmt_minutes(minutes_between(r.done_at, r.out_at)) }}</span>{% else %}-{% endif %}</td></tr>
+  {% else %}<tr><td colspan="10" class="muted">Nothing came out of bending in this period.</td></tr>{% endfor %}</tbody>
 </table></div>
+<p class="muted small">"8 of 12" = only 8 pieces of a lot of 12 went out on that line; "Still in bending" = pieces of that lot not yet out.</p>
 
 {% include '_bend_pivot.html' with context %}
 <h2>Pending in bending</h2>

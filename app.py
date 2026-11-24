@@ -199,6 +199,9 @@ def init_db():
     if "loader1" not in [r[1] for r in db.execute("PRAGMA table_info(entries)")]:
         db.execute("ALTER TABLE entries ADD COLUMN loader1 TEXT")
         db.execute("ALTER TABLE entries ADD COLUMN loader2 TEXT")
+    # split OUT lines remember the lot (original line) they came from
+    if "lot_id" not in [r[1] for r in db.execute("PRAGMA table_info(bending)")]:
+        db.execute("ALTER TABLE bending ADD COLUMN lot_id INTEGER")
     # older databases: OUT could only mean "bent"; now it can also be "sent without bending"
     if "out_kind" not in [r[1] for r in db.execute("PRAGMA table_info(bending)")]:
         db.execute("ALTER TABLE bending ADD COLUMN out_kind TEXT")
@@ -1273,6 +1276,27 @@ def bending_waiting(me, unit_id=None):
         f"LEFT JOIN machines m ON m.id=b.machine_id WHERE {where} ORDER BY b.done_at", params).fetchall()
 
 
+def out_lots(rows, start, end):
+    """Lines that left bending in the period (OUT or sent without bending from a given lot), with the
+    lot they came from: a lot given as 12 and sent out as 8 + 4 shows '8 of 12'."""
+    db = get_db()
+    lots = {}
+    for r in db.execute("SELECT COALESCE(lot_id, id) AS lot, qty, out_at FROM bending WHERE status='in'"):
+        d = lots.setdefault(r["lot"], {"total": 0, "waiting": 0})
+        d["total"] += r["qty"]
+        if not r["out_at"]:
+            d["waiting"] += r["qty"]
+    out = []
+    for r in rows:
+        if r["status"] == "in" and r["out_at"] and in_period(r["out_at"], start, end):
+            lot = lots.get(r["lot_id"] or r["id"], {"total": r["qty"], "waiting": 0})
+            out.append(dict(r, kind=r["out_kind"] or "out", when=r["out_at"], lot_qty=lot["total"],
+                            lot_waiting=lot["waiting"]))
+        elif r["status"] in ("out", "direct") and in_period(r["done_at"], start, end):
+            out.append(dict(r, kind=r["status"], when=r["done_at"], lot_qty=None, lot_waiting=0))
+    return sorted(out, key=lambda d: d["when"], reverse=True)
+
+
 def bending_data(args, me):
     period = args.get("period") if args.get("period") in ("day", "week", "month") else "day"
     try:
@@ -1324,10 +1348,7 @@ def bending_data(args, me):
                 sent=sorted(sent.values(), key=lambda d: (d["from"], d["to"])),
                 status_rows=bending_status(unit_scope, start, end),
                 given_total=tot["in"], grand=tot["out"], direct_total=tot["direct"],
-                out_list=sorted([r for r in rows if (r["status"] == "in" and r["out_at"] and r["out_kind"] != "direct"
-                                                     and in_period(r["out_at"], start, end))
-                                 or (r["status"] == "out" and in_period(r["done_at"], start, end))],
-                                key=lambda r: r["out_at"] or r["done_at"], reverse=True))
+                out_list=out_lots(rows, start, end))
 
 
 @app.route("/bending/<int:bid>/out", methods=["POST"])
@@ -1363,9 +1384,11 @@ def bending_out(bid):
         if left:
             # split: the part going out becomes its own line, the rest stays waiting on this line
             db.execute("INSERT INTO bending(user_id, unit_id, machine_id, model, qty, status, person, remarks, done_at, "
-                       "entered_at, out_at, out_by, to_unit_id, out_kind) VALUES (?,?,?,?,?,'in',?,?,?,?,?,?,?,?)",
+                       "entered_at, out_at, out_by, to_unit_id, out_kind, lot_id) "
+                       "VALUES (?,?,?,?,?,'in',?,?,?,?,?,?,?,?,?)",
                        (row["user_id"], row["unit_id"], row["machine_id"], row["model"] or "", qty, row["person"],
-                        row["remarks"], row["done_at"], row["entered_at"], t, me["id"], to_unit["id"], kind))
+                        row["remarks"], row["done_at"], row["entered_at"], t, me["id"], to_unit["id"], kind,
+                        row["lot_id"] or row["id"]))
             db.execute("UPDATE bending SET qty=? WHERE id=?", (left, bid))
         else:
             db.execute("UPDATE bending SET out_at=?, out_by=?, to_unit_id=?, out_kind=? WHERE id=?",
