@@ -43,6 +43,18 @@
   <button class="btn big start">SAVE BENDING</button>
 </form>
 
+<div class="card" id="recent">
+  {% if saved %}<div class="flash ok big-ok">✔ {{ saved.text }}</div>{% endif %}
+  <h2>My last bending entries</h2>
+  <div class="tablewrap"><table>
+    <thead><tr><th>Status</th><th class="num">Qty</th><th>Person</th><th>Machine</th><th>Sent to</th><th>Date / time</th></tr></thead>
+    <tbody>{% for r in recent %}
+      <tr class="{{ 'justsaved' if saved and saved.id == r.id }}"><td>{% if r.status == 'in' %}<span class="tag run">given IN</span>{% elif r.status == 'out' %}<span class="tag ok">out DONE</span>{% else %}<span class="tag direct">without bending</span>{% endif %}</td>
+        <td class="num"><b>{{ r.qty }}</b></td><td>{{ r.person_name }}</td><td>{{ r.machine_name or '-' }}</td><td>{{ r.to_unit_name or '-' }}</td><td>{{ r.done_at|dt }}</td></tr>
+    {% else %}<tr><td colspan="6" class="muted">No entries yet.</td></tr>{% endfor %}</tbody>
+  </table></div>
+</div>
+
 <div class="tabs">
   {% for p, t in [('day','Daily'),('week','Weekly'),('month','Monthly')] %}
     <a class="{{ 'on' if b.period == p }}" href="{{ url_for('bending', period=p, date=b.date, **q) }}">{{ t }}</a>

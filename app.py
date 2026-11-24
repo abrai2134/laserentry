@@ -1185,7 +1185,7 @@ def bending():
                 flash(f"{BEND_STATUS[status]} x {qty} was just saved. Not saved again.", "error")
             else:
                 new_person = remember("bend_persons", person, me["id"])
-                db.execute("INSERT INTO bending(user_id, unit_id, machine_id, model, qty, status, person, to_unit_id, "
+                cur = db.execute("INSERT INTO bending(user_id, unit_id, machine_id, model, qty, status, person, to_unit_id, "
                            "remarks, done_at, entered_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
                            (me["id"], machine["unit_id"], machine["id"], "", qty, status, person, to_id,
                             f.get("remarks", "").strip(), done.strftime(TS_FMT), now_str()))
@@ -1195,14 +1195,23 @@ def bending():
                 if new_person:
                     flash(f"New bending person {person} added to the list.", "ok")
                 pend = sum(r["pending"] for r in bending_status(machine["unit_id"]))
-                flash(f"Saved: {BEND_STATUS[status]} - {qty} pcs by {person} on {machine['name']}"
-                      + (f", sent to {to_unit['name']}" if to_id else "")
-                      + f". Pending in bending now: {pend} pcs.", "ok")
+                # shown right under the form (the page jumps there), not at the top
+                session["bend_saved"] = {
+                    "id": cur.lastrowid,
+                    "text": f"Saved: {BEND_STATUS[status]} - {qty} pcs by {person} on {machine['name']}"
+                            + (f", sent to {to_unit['name']}" if to_id else "")
+                            + f". Pending in bending now: {pend} pcs."}
+                return redirect(url_for("bending") + "#recent")
         return redirect(url_for("bending"))
 
     data = bending_data(request.args, me)
     persons = [r["name"] for r in db.execute("SELECT name FROM bend_persons WHERE active=1 ORDER BY name")]
+    recent = db.execute(f"SELECT b.*, {PERSON_SQL} AS person_name, tu.name AS to_unit_name, m.name AS machine_name "
+                        "FROM bending b JOIN users us ON us.id=b.user_id LEFT JOIN units tu ON tu.id=b.to_unit_id "
+                        "LEFT JOIN machines m ON m.id=b.machine_id WHERE b.user_id=? "
+                        "ORDER BY b.id DESC LIMIT 5", (me["id"],)).fetchall()
     return render_template("bending.html", b=data, args=request.args, person_list=persons,
+                           recent=recent, saved=session.pop("bend_saved", None),
                            last_person=session.get("bend_person", ""), statuses=BEND_STATUS,
                            machines=machines_for(me), last_machine=session.get("bend_machine"),
                            all_machines=db.execute("SELECT m.*, u.name AS unit_name FROM machines m JOIN units u "

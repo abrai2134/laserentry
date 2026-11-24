@@ -76,3 +76,8 @@ table.stock td.num, table.stock th.num { text-align:center; }
 .st-direct input:checked + span { background:#b45309; border-color:#b45309; color:#fff; }
 .tag.direct { background:#fef3c7; color:#92400e; }
 @media (max-width:520px) { .statuspick.three { grid-template-columns:1fr; } }
+.actions.two { grid-template-columns:1fr 1fr; margin-bottom:12px; }
+@media (max-width:520px) { .actions.two { grid-template-columns:1fr; } }
+.big-ok { font-size:16px; font-weight:700; }
+tr.justsaved td { background:#dcfce7; }
+#recent { scroll-margin-top:10px; }

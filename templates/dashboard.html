@@ -1,5 +1,9 @@
 {% extends 'base.html' %}
 {% block body %}
+<div class="actions two">
+  <a class="btn big start" href="{{ url_for('new_entry', mode='live') }}">▶ + LASER ENTRY</a>
+  <a class="btn big bend" href="{{ url_for('bending') }}">⤵ + BENDING ENTRY</a>
+</div>
 <form class="filters" method="get">
   <label>Day <input type="date" name="day" value="{{ day }}" onchange="this.form.submit()"></label>
   <a class="btn alt" href="{{ url_for('entries', **{'from': day, 'to': day}) }}">See all entries of this day</a>
