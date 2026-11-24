@@ -6,7 +6,9 @@
   {% if not item.active %}
     {% if admin %}<span class="tag late">removed</span>
     <form method="post" class="inline">{{ csrf() }}<input type="hidden" name="action" value="toggle_{{ kind }}"><input type="hidden" name="id" value="{{ item.id }}"><input type="hidden" name="anchor" value="{{ anchor }}">
-      <button class="link">bring back</button></form>{% endif %}
+      <button class="link">bring back</button></form>
+    <form method="post" class="inline" onsubmit="return askName(this, '{{ item.name }}', true)">{{ csrf() }}<input type="hidden" name="action" value="rename_{{ kind }}"><input type="hidden" name="id" value="{{ item.id }}"><input type="hidden" name="anchor" value="{{ anchor }}"><input type="hidden" name="name">
+      <button class="link" title="Move its old entries into the correct name">✎ merge into…</button></form>{% endif %}
   {% else %}
     <span class="acts">
     <form method="post" class="inline" onsubmit="return askName(this, '{{ item.name }}')">{{ csrf() }}<input type="hidden" name="action" value="rename_{{ kind }}"><input type="hidden" name="id" value="{{ item.id }}"><input type="hidden" name="anchor" value="{{ anchor }}"><input type="hidden" name="name">
@@ -18,8 +20,9 @@
 {% endmacro %}
 
 <script>
-  function askName(form, current) {
-    const v = prompt('Correct the name. Old entries and their sheet codes will be updated too.', current);
+  function askName(form, current, merge) {
+    const v = prompt(merge ? 'Type the correct name to move all old entries and stock of ' + current + ' into (e.g. 18G):'
+                           : 'Correct the name. Old entries and their sheet codes will be updated too.', current);
     if (v === null || !v.trim() || v.trim().toUpperCase() === current) return false;
     form.elements.name.value = v.trim();
     return true;

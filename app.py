@@ -258,6 +258,14 @@ def clean_code(text):
     return re.sub(r"[^A-Z0-9.\-_]", "", (text or "").upper())
 
 
+THICK_HELP = "Write thickness with its unit: 16G for gauge or 2MM for millimetre (not only a number)."
+
+
+def thickness_ok(t):
+    """A plain number like 18 is ambiguous (18G or 18MM?) and creates a separate stock line."""
+    return bool(re.search(r"[A-Z]", t or ""))
+
+
 def make_sheet_code(thickness, machine_name, sheet_name):
     """16G + MACHINENAME + SHEETNAME, e.g. 16GLASER1PANELA."""
     return clean_code(thickness) + clean_code(machine_name) + clean_code(sheet_name)
@@ -530,6 +538,8 @@ def new_entry():
             errors.append("Select material.")
         if not thickness:
             errors.append("Enter thickness (e.g. 16G).")
+        elif not thickness_ok(thickness):
+            errors.append(THICK_HELP)
         if not clean_code(sheet_name):
             errors.append("Enter sheet name.")
 
@@ -630,6 +640,8 @@ def add_item():
     name = cleaner(request.form.get("name"))
     if not clean_code(name):
         return {"ok": False, "message": f"Type a {label} first."}, 400
+    if kind == "thickness" and not thickness_ok(name):
+        return {"ok": False, "message": THICK_HELP}, 400
     is_new = remember(table, name, current_user()["id"])
     get_db().commit()
     return {"ok": True, "name": name,
@@ -671,6 +683,8 @@ def rename_master(kind, item_id, raw):
     old = row["name"]
     if new == old:
         return "ok", "No change."
+    if kind == "thickness" and not thickness_ok(new):
+        return "error", THICK_HELP
     if kind == "loader":
         other = db.execute("SELECT * FROM loaders WHERE name=? AND unit_id=? AND id<>?",
                            (new, row["unit_id"], row["id"])).fetchone()
@@ -728,10 +742,14 @@ def remove_master(kind, item_id):
         etab = "bending" if kind in ("model", "person") else "entries"
         used = db.execute(f"SELECT COUNT(*) FROM {etab} WHERE {col}=?",
                           (row["id"] if kind == "machine" else row["name"],)).fetchone()[0]
+        if kind in ("material", "thickness"):
+            used += db.execute(f"SELECT COUNT(*) FROM stock_moves WHERE {col}=?", (row["name"],)).fetchone()[0]
     if used:
         db.execute(f"UPDATE {table} SET active=0 WHERE id=?", (row["id"],))
         return "ok", (f"{row['name']} removed from the list. It is used in {used} old entries, "
-                      "so those entries keep it.")
+                      "so those entries (and stock) keep it. If it was a mistake for another name "
+                      "(e.g. 18 instead of 18G), use ✎ edit and type the correct name: the entries and "
+                      "stock are then moved into it.")
     db.execute(f"DELETE FROM {table} WHERE id=?", (row["id"],))
     return "ok", f"{row['name']} removed."
 
@@ -790,7 +808,9 @@ def masters():
         elif action.startswith("add_") and action[4:] in ITEM_KINDS:
             table, label, cleaner = ITEM_KINDS[action[4:]]
             name = cleaner(f.get("name"))
-            if clean_code(name):
+            if action == "add_thickness" and name and not thickness_ok(name):
+                flash(THICK_HELP, "error")
+            elif clean_code(name):
                 is_new = remember(table, name, me["id"])
                 done(f"{label.capitalize()} {name} added." if is_new else f"{name} is already in the list.", log=is_new)
         elif action.split("_", 1)[0] in ("rename", "remove") and action.split("_", 1)[-1] in MASTER_KINDS:
@@ -1545,7 +1565,9 @@ def stock():
         except ValueError:
             qty = None
         if action in ("in", "count"):
-            if not unit or not material or not thickness:
+            if thickness and not thickness_ok(thickness):
+                flash(THICK_HELP, "error")
+            elif not unit or not material or not thickness:
                 flash("Choose unit, material and thickness.", "error")
             elif action == "in" and (qty is None or qty < 1):
                 flash("Enter how many sheets came (1 or more).", "error")
