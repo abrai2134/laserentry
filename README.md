@@ -51,7 +51,8 @@ Only finished sheets are counted. Operators see their own summary only.
 
 Menu **Bending** (purple button on the operator home page and admin dashboard).
 1. Save **Given to bending (IN)** with machine, bending person, quantity (time recorded).
-2. When bending is finished, press **✔ OUT** on that line in "In bending now" (Bending page,
+2. When bending is finished, press **✔ OUT** (or **➜ Without bending**) on that line in
+   "In bending now" (operator home page, Bending page,
    Stock page or Dashboard) and choose the unit it is sent to. OUT time is recorded and the
    **bending time** (OUT - IN) is shown, with average per person.
 3. **Sent without bending** is saved from the form with the unit it was sent to.

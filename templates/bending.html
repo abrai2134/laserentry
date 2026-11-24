@@ -44,7 +44,7 @@
 </form>
 
 <div class="card" id="waiting">
-  <h2>⏳ In bending now ({{ waiting|length }}) - press OUT when finished</h2>
+  <h2>⏳ In bending now ({{ waiting|length }}) - press OUT when finished, or send without bending</h2>
   {% include '_bend_waiting.html' with context %}
 </div>
 
@@ -91,7 +91,7 @@
   <thead><tr><th>Status</th><th class="num">Qty</th><th>Bending person</th><th>Machine</th><th>Sent to</th><th>OUT at</th><th>Bending time</th>{% if admin %}<th>Entered by</th><th>Unit</th>{% endif %}<th>Given / sent at</th><th>Entered at</th><th>Remarks</th><th></th></tr></thead>
   <tbody>{% for r in b.rows %}
     <tr><td>{% include '_bend_tag.html' %}</td><td class="num"><b>{{ r.qty }}</b></td><td><b>{{ r.person_name }}</b></td><td>{{ r.machine_name or '-' }}</td><td>{{ r.to_unit_name or '-' }}</td>
-      <td>{{ r.out_at|dt if r.out_at else '-' }}</td><td>{{ fmt_minutes(minutes_between(r.done_at, r.out_at)) if r.out_at else '-' }}</td>{% if admin %}<td>{{ r.operator }}</td><td>{{ r.unit_name or '' }}</td>{% endif %}
+      <td>{{ r.out_at|dt if r.out_at else '-' }}</td><td>{{ fmt_minutes(minutes_between(r.done_at, r.out_at)) if r.out_at and r.out_kind != 'direct' else '-' }}</td>{% if admin %}<td>{{ r.operator }}</td><td>{{ r.unit_name or '' }}</td>{% endif %}
       <td>{{ r.done_at|dt }}</td><td>{{ r.entered_at|dt }}</td><td style="white-space:normal">{{ r.remarks or '' }}</td>
       <td>{% if admin or (r.user_id == me.id and r.entered_at[:10] == today) %}
         <form method="post" class="inline" onsubmit="return confirm('Delete this entry ({{ r.qty }} pcs)?')">{{ csrf() }}<input type="hidden" name="action" value="delete"><input type="hidden" name="id" value="{{ r.id }}"><button class="link danger">delete</button></form>{% endif %}</td></tr>

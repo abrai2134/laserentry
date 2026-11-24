@@ -185,6 +185,9 @@ def init_db():
     if "out_at" not in cols:
         db.execute("ALTER TABLE bending ADD COLUMN out_at TEXT")
         db.execute("ALTER TABLE bending ADD COLUMN out_by INTEGER REFERENCES users(id)")
+    # older databases: OUT could only mean "bent"; now it can also be "sent without bending"
+    if "out_kind" not in [r[1] for r in db.execute("PRAGMA table_info(bending)")]:
+        db.execute("ALTER TABLE bending ADD COLUMN out_kind TEXT")
     # older databases: bending had no destination unit
     if "to_unit_id" not in [r[1] for r in db.execute("PRAGMA table_info(bending)")]:
         db.execute("ALTER TABLE bending ADD COLUMN to_unit_id INTEGER REFERENCES units(id)")
@@ -419,6 +422,7 @@ def home():
         "SELECT COUNT(*), COALESCE(SUM(qty),0) FROM entries WHERE user_id=? AND substr(cut_start,1,10)=?",
         (me["id"], today)).fetchone()
     return render_template("home.html", running=running, recent=recent, today_count=today_count,
+                           waiting=bending_waiting(me), units=db.execute("SELECT * FROM units ORDER BY name").fetchall(),
                            stock_rows=stock_balances(stock_scope(me)), low=LOW_STOCK)
 
 
@@ -1099,7 +1103,8 @@ def bending_status(unit_id=None, start=None, end=None):
     """Per unit: qty given / out / sent without bending in the period, and pending in bending now."""
     db = get_db()
     where, params = ("WHERE b.unit_id=?", [unit_id]) if unit_id else ("", [])
-    rows = db.execute("SELECT b.unit_id, un.name AS unit_name, b.status, b.qty, b.done_at, b.out_at FROM bending b "
+    rows = db.execute("SELECT b.unit_id, un.name AS unit_name, b.status, b.qty, b.done_at, b.out_at, b.out_kind "
+                      "FROM bending b "
                       f"LEFT JOIN units un ON un.id=b.unit_id {where}", params).fetchall()
     out = {}
     for r in rows:
@@ -1111,7 +1116,7 @@ def bending_status(unit_id=None, start=None, end=None):
             if start and in_period(r["done_at"], start, end):
                 d["given"] += r["qty"]
             if start and in_period(r["out_at"], start, end):
-                d["done"] += r["qty"]
+                d["direct" if r["out_kind"] == "direct" else "done"] += r["qty"]
         elif start and in_period(r["done_at"], start, end):
             d["done" if r["status"] == "out" else "direct"] += r["qty"]
     return sorted((d for d in out.values() if d["pending"] or d["given"] or d["done"] or d["direct"]),
@@ -1164,9 +1169,12 @@ def bending_data(args, me):
             if in_period(r["done_at"], start, end):
                 add(r, "in")
             if in_period(r["out_at"], start, end):
-                p = add(r, "out", "out")
-                p["mins"] += minutes_between(r["done_at"], r["out_at"]) or 0
-                p["timed"] += 1
+                if r["out_kind"] == "direct":          # given to bending, then sent on without bending
+                    add(r, "direct", "direct")
+                else:
+                    p = add(r, "out", "out")
+                    p["mins"] += minutes_between(r["done_at"], r["out_at"]) or 0
+                    p["timed"] += 1
         elif in_period(r["done_at"], start, end):
             add(r, r["status"], r["status"])
     for p in people.values():
@@ -1190,6 +1198,7 @@ def bending_out(bid):
     row = db.execute("SELECT * FROM bending WHERE id=?", (bid,)).fetchone()
     to_unit = db.execute("SELECT * FROM units WHERE id=?", (request.form.get("to_unit_id"),)).fetchone()
     back = request.form.get("back") or url_for("bending")
+    kind = "direct" if request.args.get("kind") == "direct" else "out"
     if not row or row["status"] != "in":
         abort(404)
     if me["role"] != "admin" and me["unit_id"] and row["unit_id"] != me["unit_id"]:
@@ -1200,11 +1209,14 @@ def bending_out(bid):
         flash("Select to which unit it is sent, then press OUT.", "error")
     else:
         t = now_str()
-        db.execute("UPDATE bending SET out_at=?, out_by=?, to_unit_id=? WHERE id=? AND out_at IS NULL",
-                   (t, me["id"], to_unit["id"], bid))
+        db.execute("UPDATE bending SET out_at=?, out_by=?, to_unit_id=?, out_kind=? WHERE id=? AND out_at IS NULL",
+                   (t, me["id"], to_unit["id"], kind, bid))
         db.commit()
-        flash(f"OUT from bending: {row['qty']} pcs ({row['person'] or ''}) sent to {to_unit['name']}. "
-              f"Bending took {fmt_minutes(minutes_between(row['done_at'], t))}.", "ok")
+        if kind == "direct":
+            flash(f"Sent without bending: {row['qty']} pcs ({row['person'] or ''}) to {to_unit['name']}.", "ok")
+        else:
+            flash(f"OUT from bending: {row['qty']} pcs ({row['person'] or ''}) sent to {to_unit['name']}. "
+                  f"Bending took {fmt_minutes(minutes_between(row['done_at'], t))}.", "ok")
     return redirect(back)
 
 
@@ -1330,10 +1342,12 @@ def bending_csv():
     w.writerow(["Given / sent at", "Entered at", "Status", "OUT at", "Bending time (min)", "Bending person",
                 "Entered by", "Unit", "Machine", "Sent to unit", "Qty", "Model (old entries)", "Remarks"])
     for r in b["rows"]:
-        st = ("Out from bending" if r["out_at"] else "In bending (waiting)") if r["status"] == "in" \
+        st = (("Sent without bending" if r["out_kind"] == "direct" else "Out from bending") if r["out_at"]
+              else "In bending (waiting)") if r["status"] == "in" \
             else BEND_STATUS.get(r["status"], r["status"])
         w.writerow([r["done_at"], r["entered_at"], st, r["out_at"] or "",
-                    _blank(minutes_between(r["done_at"], r["out_at"])), r["person_name"],
+                    "" if r["out_kind"] == "direct" else _blank(minutes_between(r["done_at"], r["out_at"])),
+                    r["person_name"],
                     r["operator"], r["unit_name"] or "", r["machine_name"] or "", r["to_unit_name"] or "",
                     r["qty"], r["model"] or "", r["remarks"] or ""])
     name = f"bending_{b['period']}_{b['start'].isoformat()}.csv"

@@ -1,15 +1,24 @@
-{# needs: waiting, units, now_ts (optional) #}
-<div class="tablewrap"><table class="waiting">
-  <thead><tr><th>Given at</th><th class="num">Qty</th><th>Bending person</th><th>Machine</th>{% if me.role == 'admin' or not me.unit_id %}<th>Unit</th>{% endif %}<th>In bending for</th><th>Finished? Send to unit → OUT</th></tr></thead>
-  <tbody>{% for r in waiting %}
-    <tr><td>{{ r.done_at|dt }}</td><td class="num"><b>{{ r.qty }}</b></td><td><b>{{ r.person_name }}</b></td><td>{{ r.machine_name or '-' }}</td>
-      {% if me.role == 'admin' or not me.unit_id %}<td>{{ r.unit_name or '' }}</td>{% endif %}
-      <td><span class="tag run">{{ fmt_minutes(minutes_between(r.done_at, now_str())) }}</span></td>
-      <td><form method="post" action="{{ url_for('bending_out', bid=r.id) }}" class="outform"
-                onsubmit="return confirm('Bending finished? Mark {{ r.qty }} pcs OUT now?')">
-        <input type="hidden" name="csrf" value="{{ csrf_token }}"><input type="hidden" name="back" value="{{ request.full_path }}">
-        <select name="to_unit_id" required>{% for u in units %}<option value="{{ u.id }}" {{ 'selected' if u.id == r.unit_id }}>{{ u.name }}</option>{% endfor %}</select>
-        <button class="btn outbtn">✔ OUT</button>
-      </form></td></tr>
-  {% else %}<tr><td colspan="7" class="muted">Nothing waiting in bending.</td></tr>{% endfor %}</tbody>
-</table></div>
+{# needs: waiting, units #}
+<div class="waitlist">
+{% for r in waiting %}
+  <div class="waitcard">
+    <div class="waitinfo">
+      <span class="wqty">{{ r.qty }} pcs</span>
+      <b>{{ r.person_name }}</b>
+      <span class="muted">· {{ r.machine_name or '-' }}{% if me.role == 'admin' or not me.unit_id %} · {{ r.unit_name or '' }}{% endif %}</span>
+      <span class="muted small">· given {{ r.done_at|dt }}</span>
+      <span class="tag run">in bending {{ fmt_minutes(minutes_between(r.done_at, now_str())) }}</span>
+    </div>
+    <form method="post" action="{{ url_for('bending_out', bid=r.id) }}" class="outform">
+      <input type="hidden" name="csrf" value="{{ csrf_token }}"><input type="hidden" name="back" value="{{ request.full_path }}">
+      <label class="small">Send to
+        <select name="to_unit_id" required>{% for u in units %}<option value="{{ u.id }}" {{ 'selected' if u.id == r.unit_id }}>{{ u.name }}</option>{% endfor %}</select></label>
+      <button class="btn outbtn" onclick="return confirm('Bending finished? Mark {{ r.qty }} pcs OUT now?')">✔ OUT</button>
+      <button class="btn directbtn" formaction="{{ url_for('bending_out', bid=r.id, kind='direct') }}"
+              onclick="return confirm('Send {{ r.qty }} pcs WITHOUT bending?')">➜ Without bending</button>
+    </form>
+  </div>
+{% else %}
+  <p class="muted">Nothing waiting in bending.</p>
+{% endfor %}
+</div>

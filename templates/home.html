@@ -3,7 +3,7 @@
 <div class="actions">
   <a class="btn big start" href="{{ url_for('new_entry', mode='live') }}">▶ START CUTTING A SHEET</a>
   <a class="btn big alt" href="{{ url_for('new_entry', mode='manual') }}">✎ Enter a sheet already cut</a>
-  <a class="btn big bend" href="{{ url_for('bending') }}">⤵ BENDING ENTRY (model + qty)</a>
+  <a class="btn big bend" href="{{ url_for('bending') }}">⤵ BENDING ENTRY</a>
 </div>
 <p class="muted">Today: <b>{{ today_count[0] }}</b> sheets, <b>{{ today_count[1] }}</b> pcs</p>
 
@@ -26,6 +26,11 @@
   </div>
 </div>
 {% endfor %}
+{% endif %}
+
+{% if waiting %}
+<h2>⏳ In bending now ({{ waiting|length }})</h2>
+{% include '_bend_waiting.html' with context %}
 {% endif %}
 
 <h2>Stock pending{% if me.unit_name %} at {{ me.unit_name }}{% endif %} <a class="small" href="{{ url_for('stock') }}">+ material received</a></h2>

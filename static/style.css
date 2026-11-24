@@ -85,3 +85,12 @@ tr.justsaved td { background:#dcfce7; }
 .outform select { width:auto; margin:0; padding:6px 8px; }
 .btn.outbtn { background:var(--go); padding:8px 14px; white-space:nowrap; }
 #waiting h2 { margin-top:0; }
+.btn.directbtn { background:#b45309; padding:8px 12px; white-space:nowrap; }
+@media (max-width:620px) { .outform { flex-wrap:wrap; } }
+.waitlist { display:grid; gap:8px; margin-bottom:16px; }
+.waitcard { background:var(--card); border:1px solid var(--line); border-left:6px solid #1d4ed8; border-radius:10px; padding:10px 12px;
+  display:flex; flex-wrap:wrap; gap:8px 16px; align-items:center; justify-content:space-between; }
+.waitinfo { display:flex; flex-wrap:wrap; gap:4px 8px; align-items:center; }
+.wqty { font-size:18px; font-weight:800; }
+.outform label { display:flex; align-items:center; gap:6px; margin:0; font-weight:600; }
+@media (max-width:620px) { .outform { width:100%; } .outform .btn { flex:1; } .outform label { width:100%; } .outform select { flex:1; } }
