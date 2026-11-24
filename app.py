@@ -1014,7 +1014,9 @@ def summary():
                               "ON u.id=m.unit_id WHERE m.unit_id=? ORDER BY m.name", (me["unit_id"],)).fetchall()
     bend = bending_data({"period": data["period"], "date": data["date"], "unit": request.args.get("unit", ""),
                          "machine": request.args.get("machine", "")}, me)
+    unit_scope = int(request.args["unit"]) if (me["role"] == "admin" and request.args.get("unit")) else None
     return render_template("summary.html", s=data, args=request.args, machines=machines, b=bend,
+                           waiting=bending_waiting(me, unit_scope),
                            units=db.execute("SELECT * FROM units ORDER BY name").fetchall(),
                            materials=[m["name"] for m in material_list(active_only=False)])
 
@@ -1186,7 +1188,11 @@ def bending_data(args, me):
                 people=sorted(people.values(), key=lambda p: -p["out"]),
                 sent=sorted(sent.values(), key=lambda d: (d["from"], d["to"])),
                 status_rows=bending_status(unit_scope, start, end),
-                given_total=tot["in"], grand=tot["out"], direct_total=tot["direct"])
+                given_total=tot["in"], grand=tot["out"], direct_total=tot["direct"],
+                out_list=sorted([r for r in rows if (r["status"] == "in" and r["out_at"] and r["out_kind"] != "direct"
+                                                     and in_period(r["out_at"], start, end))
+                                 or (r["status"] == "out" and in_period(r["done_at"], start, end))],
+                                key=lambda r: r["out_at"] or r["done_at"], reverse=True))
 
 
 @app.route("/bending/<int:bid>/out", methods=["POST"])
