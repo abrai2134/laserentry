@@ -1,11 +1,10 @@
 {# needs: bend_rows #}
-{% set multi = (bend_rows|map(attribute='unit_id')|unique|list|length) > 1 %}
 <div class="tablewrap"><table class="stock">
-  <thead><tr>{% if multi %}<th>Unit</th>{% endif %}<th>Model</th><th class="num">Given (IN)</th><th class="num">Out (DONE)</th><th class="num">Pending in bending</th></tr></thead>
+  <thead><tr><th>Unit</th><th class="num">Given (IN)</th><th class="num">Out (DONE)</th><th class="num">Sent without bending</th><th class="num">Pending in bending</th></tr></thead>
   <tbody>{% for r in bend_rows %}
-    <tr>{% if multi %}<td>{{ r.unit_name or '' }}</td>{% endif %}<td><b>{{ r.model }}</b></td>
-      <td class="num">{{ r.given or '-' }}</td><td class="num">{{ r.done or '-' }}</td>
+    <tr><td><b>{{ r.unit_name or '' }}</b></td>
+      <td class="num">{{ r.given or '-' }}</td><td class="num">{{ r.done or '-' }}</td><td class="num">{{ r.direct or '-' }}</td>
       <td class="num"><span class="bal {{ 'neg' if r.pending < 0 else ('low' if r.pending > 0 else 'ok') }}">{{ r.pending }}</span></td></tr>
   {% else %}<tr><td colspan="5" class="muted">No bending activity.</td></tr>{% endfor %}</tbody>
 </table></div>
-<p class="muted small">Given / Out = this period. Pending = everything given to bending so far minus everything out. Orange = still lying in bending, red = more out than given (check entries).</p>
+<p class="muted small">Given / Out / Sent = this period. Pending = everything given to bending so far minus everything out. Orange = still lying in bending, red = more out than given (check entries).</p>

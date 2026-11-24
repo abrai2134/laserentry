@@ -77,9 +77,10 @@
 <div class="stats">
   <div class="stat"><b>{{ b.given_total }}</b><span>given to bending (pcs)</span></div>
   <div class="stat"><b>{{ b.grand }}</b><span>out from bending (pcs)</span></div>
+  <div class="stat"><b>{{ b.direct_total }}</b><span>sent without bending (pcs)</span></div>
   <div class="stat"><b>{{ b.status_rows|sum(attribute='pending') }}</b><span>pending in bending now</span></div>
 </div>
 {% include '_bend_pivot.html' with context %}
-<h2>Bending model status</h2>
+<h2>Pending in bending</h2>
 {% set bend_rows = b.status_rows %}{% include '_bend_status.html' with context %}
 {% endblock %}

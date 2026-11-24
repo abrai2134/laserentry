@@ -9,9 +9,10 @@
   <h2>✚ New bending entry</h2>
   <p class="muted small">Entry time is recorded automatically.</p>
   <label>Status</label>
-  <div class="statuspick">
+  <div class="statuspick three">
     <label class="chip st-in"><input type="radio" name="status" value="in" required><span>⬇ Given to bending (IN)</span></label>
     <label class="chip st-out"><input type="radio" name="status" value="out" required><span>✔ Out from bending (DONE)</span></label>
+    <label class="chip st-direct"><input type="radio" name="status" value="direct" required><span>➜ Sent without bending</span></label>
   </div>
   {% if machines %}
   <label>Machine
@@ -29,13 +30,11 @@
   <datalist id="persons">{% for p in person_list %}<option value="{{ p }}">{% endfor %}</datalist>
   <div class="small" id="personHint"></div>
 
-  <label for="model">Model</label>
-  <div class="row">
-    <input name="model" id="model" list="models" required autocapitalize="characters" autocomplete="off" placeholder="Pick from list or type a new model">
-    <button type="button" class="btn addbtn" id="addModel">+ Add</button>
+  <div id="toUnitBox" class="newbox">
+    <label>Sent to which unit?
+      <select name="to_unit_id" id="toUnit"><option value="">-- select unit --</option>{% for u in units %}<option value="{{ u.id }}">{{ u.name }}</option>{% endfor %}</select>
+    </label>
   </div>
-  <datalist id="models">{% for m in model_list %}<option value="{{ m }}">{% endfor %}</datalist>
-  <div class="small" id="modelHint"></div>
   <div class="grid2 tight">
     <label>Quantity (pcs) <input name="qty" type="number" min="1" inputmode="numeric" required></label>
     <label>Date / time <input type="datetime-local" name="done_at" value="{{ now_local }}" max="{{ now_local }}"></label>
@@ -60,32 +59,29 @@
   {% endif %}
   <label>Machine <select name="machine" onchange="this.form.submit()"><option value="">All</option>{% for m in all_machines %}<option value="{{ m.id }}" {{ 'selected' if args.get('machine') == m.id|string }}>{% if admin or not me.unit_id %}{{ m.unit_name }} / {% endif %}{{ m.name }}</option>{% endfor %}</select></label>
   <label>Person <select name="person" onchange="this.form.submit()"><option value="">All</option>{% for p in person_list %}<option {{ 'selected' if args.get('person') == p }}>{{ p }}</option>{% endfor %}</select></label>
-  <label>Model <select name="model" onchange="this.form.submit()"><option value="">All</option>{% for m in model_list %}<option {{ 'selected' if args.get('model') == m }}>{{ m }}</option>{% endfor %}</select></label>
   <a class="btn" href="{{ url_for('bending_csv', period=b.period, date=b.date, **q) }}">Download Excel (CSV)</a>
 </form>
 
-<h2>{{ b.label }} · given {{ b.given_total }} pcs · out {{ b.grand }} pcs</h2>
+<h2>{{ b.label }} · given {{ b.given_total }} · out {{ b.grand }} · sent without bending {{ b.direct_total }}</h2>
 
-<h2>Model status (pending in bending)</h2>
+<h2>Pending in bending</h2>
 {% set bend_rows = b.status_rows %}{% include '_bend_status.html' with context %}
 
 {% include '_bend_pivot.html' with context %}
 
 <h2>Entries</h2>
 <div class="tablewrap"><table>
-  <thead><tr><th>Status</th><th>Model</th><th class="num">Qty</th><th>Bending person</th><th>Machine</th>{% if admin %}<th>Entered by</th><th>Unit</th>{% endif %}<th>Date / time</th><th>Entered at</th><th>Remarks</th><th></th></tr></thead>
+  <thead><tr><th>Status</th><th class="num">Qty</th><th>Bending person</th><th>Machine</th><th>Sent to</th>{% if admin %}<th>Entered by</th><th>Unit</th>{% endif %}<th>Date / time</th><th>Entered at</th><th>Remarks</th><th></th></tr></thead>
   <tbody>{% for r in b.rows %}
-    <tr><td>{% if r.status == 'in' %}<span class="tag run">given IN</span>{% else %}<span class="tag ok">out DONE</span>{% endif %}</td><td><b>{{ r.model }}</b></td><td class="num">{{ r.qty }}</td><td><b>{{ r.person_name }}</b></td><td>{{ r.machine_name or '-' }}</td>{% if admin %}<td>{{ r.operator }}</td><td>{{ r.unit_name or '' }}</td>{% endif %}
+    <tr><td>{% if r.status == 'in' %}<span class="tag run">given IN</span>{% elif r.status == 'out' %}<span class="tag ok">out DONE</span>{% else %}<span class="tag direct">without bending</span>{% endif %}</td><td class="num"><b>{{ r.qty }}</b></td><td><b>{{ r.person_name }}</b></td><td>{{ r.machine_name or '-' }}</td><td>{{ r.to_unit_name or '-' }}</td>{% if admin %}<td>{{ r.operator }}</td><td>{{ r.unit_name or '' }}</td>{% endif %}
       <td>{{ r.done_at|dt }}</td><td>{{ r.entered_at|dt }}</td><td style="white-space:normal">{{ r.remarks or '' }}</td>
       <td>{% if admin or (r.user_id == me.id and r.entered_at[:10] == today) %}
-        <form method="post" class="inline" onsubmit="return confirm('Delete {{ r.model }} x {{ r.qty }}?')">{{ csrf() }}<input type="hidden" name="action" value="delete"><input type="hidden" name="id" value="{{ r.id }}"><button class="link danger">delete</button></form>{% endif %}</td></tr>
+        <form method="post" class="inline" onsubmit="return confirm('Delete this entry ({{ r.qty }} pcs)?')">{{ csrf() }}<input type="hidden" name="action" value="delete"><input type="hidden" name="id" value="{{ r.id }}"><button class="link danger">delete</button></form>{% endif %}</td></tr>
   {% else %}<tr><td colspan="11" class="muted">No entries.</td></tr>{% endfor %}</tbody>
 </table></div>
 
 <script>
-  [{kind: 'model', input: 'model', btn: 'addModel', hint: 'modelHint', list: 'models', label: 'model',
-    norm: v => v.trim().toUpperCase(), known: new Set({{ model_list|tojson }})},
-   {kind: 'person', input: 'person', btn: 'addPerson', hint: 'personHint', list: 'persons', label: 'bending person',
+  [{kind: 'person', input: 'person', btn: 'addPerson', hint: 'personHint', list: 'persons', label: 'bending person',
     norm: v => v.trim().split(/\s+/).map(w => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase()).join(' '),
     known: new Set({{ person_list|tojson }})}
   ].forEach(function (q) {
@@ -111,5 +107,16 @@
     });
     upd();
   });
+  (function () {
+    const box = document.getElementById('toUnitBox'), sel = document.getElementById('toUnit');
+    function upd() {
+      const st = document.querySelector('input[name=status]:checked');
+      const need = st && (st.value === 'out' || st.value === 'direct');
+      box.style.display = need ? 'block' : 'none';
+      sel.required = !!need;
+    }
+    document.querySelectorAll('input[name=status]').forEach(r => r.addEventListener('change', upd));
+    upd();
+  })();
 </script>
 {% endblock %}

@@ -70,14 +70,6 @@
 </div>
 
 <div class="grid2">
-  <div class="card" id="models">
-    <h2>Bending models ({{ models|length }})</h2>
-    <form method="post" class="row">{{ csrf() }}<input type="hidden" name="action" value="add_model"><input type="hidden" name="anchor" value="models">
-      <input name="name" placeholder="e.g. WW-2HP-BODY" required autocapitalize="characters"><button class="btn">Add model</button></form>
-    <input class="search" placeholder="Search models..." oninput="const q=this.value.toUpperCase();document.querySelectorAll('#modelList li').forEach(li=>li.style.display=li.textContent.toUpperCase().includes(q)?'':'none')">
-    <div class="scrollbox"><ul id="modelList">{% for n in models %}<li><b>{{ n.name }}</b> <span class="muted small">{{ n.added_by_name or '' }}</span> {{ toggle('model', n, 'models') }}</li>
-    {% else %}<li class="muted">None yet.</li>{% endfor %}</ul></div>
-  </div>
   <div class="card" id="persons">
     <h2>Bending persons ({{ persons|length }})</h2>
     <form method="post" class="row">{{ csrf() }}<input type="hidden" name="action" value="add_person"><input type="hidden" name="anchor" value="persons">

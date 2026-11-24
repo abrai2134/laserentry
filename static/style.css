@@ -72,3 +72,7 @@ table.stock td.num, table.stock th.num { text-align:center; }
 .statuspick .chip span { display:block; padding:14px 10px; font-size:15px; }
 .st-in input:checked + span { background:#1d4ed8; border-color:#1d4ed8; color:#fff; }
 .st-out input:checked + span { background:var(--go); border-color:var(--go); color:#fff; }
+.statuspick.three { grid-template-columns:repeat(3,1fr); }
+.st-direct input:checked + span { background:#b45309; border-color:#b45309; color:#fff; }
+.tag.direct { background:#fef3c7; color:#92400e; }
+@media (max-width:520px) { .statuspick.three { grid-template-columns:1fr; } }
