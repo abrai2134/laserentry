@@ -1,0 +1,93 @@
+{% extends 'base.html' %}
+{% block body %}
+{% macro csrf() %}<input type="hidden" name="csrf" value="{{ csrf_token }}">{% endmacro %}
+{% set admin = me.role == 'admin' %}
+{% set q = {'unit': args.get('unit',''), 'user': args.get('user',''), 'model': args.get('model','')} %}
+<h1>Bending</h1>
+
+<form class="card" method="post" id="bf">{{ csrf() }}
+  <h2>✚ New bending entry</h2>
+  <p class="muted small">Entry time is recorded automatically.</p>
+  <label for="model">Model</label>
+  <div class="row">
+    <input name="model" id="model" list="models" required autocapitalize="characters" autocomplete="off" placeholder="Pick from list or type a new model">
+    <button type="button" class="btn addbtn" id="addModel">+ Add</button>
+  </div>
+  <datalist id="models">{% for m in model_list %}<option value="{{ m }}">{% endfor %}</datalist>
+  <div class="small" id="modelHint"></div>
+  <div class="grid2 tight">
+    <label>Quantity (pcs) <input name="qty" type="number" min="1" inputmode="numeric" required></label>
+    <label>Bent at <input type="datetime-local" name="done_at" value="{{ now_local }}" max="{{ now_local }}"></label>
+  </div>
+  <label>Remarks (optional) <input name="remarks"></label>
+  <button class="btn big start">SAVE BENDING</button>
+</form>
+
+<div class="tabs">
+  {% for p, t in [('day','Daily'),('week','Weekly'),('month','Monthly')] %}
+    <a class="{{ 'on' if b.period == p }}" href="{{ url_for('bending', period=p, date=b.date, **q) }}">{{ t }}</a>
+  {% endfor %}
+</div>
+<form class="filters" method="get">
+  <input type="hidden" name="period" value="{{ b.period }}">
+  <a class="btn alt" href="{{ url_for('bending', period=b.period, date=b.prev_day, **q) }}">◀</a>
+  <label>Date <input type="date" name="date" value="{{ b.date }}" onchange="this.form.submit()"></label>
+  <a class="btn alt" href="{{ url_for('bending', period=b.period, date=b.next_day, **q) }}">▶</a>
+  {% if admin %}
+  <label>Unit <select name="unit" onchange="this.form.submit()"><option value="">All</option>{% for u in units %}<option value="{{ u.id }}" {{ 'selected' if args.get('unit') == u.id|string }}>{{ u.name }}</option>{% endfor %}</select></label>
+  <label>Operator <select name="user" onchange="this.form.submit()"><option value="">All</option>{% for u in users %}<option value="{{ u.id }}" {{ 'selected' if args.get('user') == u.id|string }}>{{ u.full_name }}</option>{% endfor %}</select></label>
+  {% endif %}
+  <label>Model <select name="model" onchange="this.form.submit()"><option value="">All</option>{% for m in model_list %}<option {{ 'selected' if args.get('model') == m }}>{{ m }}</option>{% endfor %}</select></label>
+  <a class="btn" href="{{ url_for('bending_csv', period=b.period, date=b.date, **q) }}">Download Excel (CSV)</a>
+</form>
+
+<h2>{{ b.label }} · {{ b.grand }} pcs</h2>
+<h2>Qty by operator and model</h2>
+<div class="tablewrap"><table class="pivot">
+  <thead><tr><th>Operator</th>{% if admin %}<th>Unit</th>{% endif %}{% for m in b.models %}<th class="num">{{ m }}</th>{% endfor %}<th class="num tot">Total qty</th></tr></thead>
+  <tbody>{% for o in b.operators %}
+    <tr><td><b>{{ o.operator }}</b></td>{% if admin %}<td>{{ o.unit }}</td>{% endif %}
+      {% for m in b.models %}<td class="num">{{ o.cells.get(m) or '-' }}</td>{% endfor %}
+      <td class="num tot">{{ o.qty }}</td></tr>
+  {% else %}<tr><td colspan="3" class="muted">No bending entries in this period.</td></tr>{% endfor %}</tbody>
+  {% if b.operators %}<tfoot><tr><th>TOTAL</th>{% if admin %}<th></th>{% endif %}{% for m in b.models %}<th class="num">{{ b.totals[m] }}</th>{% endfor %}<th class="num tot">{{ b.grand }}</th></tr></tfoot>{% endif %}
+</table></div>
+
+<h2>Entries</h2>
+<div class="tablewrap"><table>
+  <thead><tr><th>Model</th><th class="num">Qty</th>{% if admin %}<th>Operator</th><th>Unit</th>{% endif %}<th>Bent at</th><th>Entered at</th><th>Remarks</th><th></th></tr></thead>
+  <tbody>{% for r in b.rows %}
+    <tr><td><b>{{ r.model }}</b></td><td class="num">{{ r.qty }}</td>{% if admin %}<td>{{ r.operator }}</td><td>{{ r.unit_name or '' }}</td>{% endif %}
+      <td>{{ r.done_at|dt }}</td><td>{{ r.entered_at|dt }}</td><td style="white-space:normal">{{ r.remarks or '' }}</td>
+      <td>{% if admin or (r.user_id == me.id and r.entered_at[:10] == today) %}
+        <form method="post" class="inline" onsubmit="return confirm('Delete {{ r.model }} x {{ r.qty }}?')">{{ csrf() }}<input type="hidden" name="action" value="delete"><input type="hidden" name="id" value="{{ r.id }}"><button class="link danger">delete</button></form>{% endif %}</td></tr>
+  {% else %}<tr><td colspan="8" class="muted">No entries.</td></tr>{% endfor %}</tbody>
+</table></div>
+
+<script>
+  (function () {
+    const known = new Set({{ model_list|tojson }});
+    const box = document.getElementById('model'), btn = document.getElementById('addModel'), hint = document.getElementById('modelHint');
+    let keep = false;
+    function upd() {
+      const v = box.value.trim().toUpperCase(), isNew = v && !known.has(v);
+      btn.style.display = isNew ? '' : 'none';
+      if (isNew) { hint.className = 'small warn'; hint.textContent = 'New model. Press "+ Add" to save it to the list.'; }
+      else if (!keep) { hint.className = 'small'; hint.textContent = ''; }
+    }
+    box.addEventListener('input', () => { keep = false; upd(); });
+    btn.addEventListener('click', async () => {
+      const fd = new FormData(); fd.append('csrf', '{{ csrf_token }}'); fd.append('kind', 'model'); fd.append('name', box.value);
+      try {
+        const data = await (await fetch('{{ url_for("add_item") }}', {method: 'POST', body: fd})).json();
+        if (data.ok) {
+          known.add(data.name); box.value = data.name;
+          const o = document.createElement('option'); o.value = data.name; document.getElementById('models').appendChild(o);
+          keep = true; upd(); hint.className = 'small okmsg'; hint.textContent = '✔ ' + data.message;
+        } else { hint.className = 'small warn'; hint.textContent = data.message; }
+      } catch (e) { hint.className = 'small warn'; hint.textContent = 'Could not save. Refresh the page and try again.'; }
+    });
+    upd();
+  })();
+</script>
+{% endblock %}

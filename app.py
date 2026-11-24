@@ -114,6 +114,24 @@ CREATE TABLE IF NOT EXISTS stock_moves (
     user_id INTEGER REFERENCES users(id)
 );
 CREATE INDEX IF NOT EXISTS idx_stock_key ON stock_moves(unit_id, material, thickness);
+CREATE TABLE IF NOT EXISTS bend_models (
+    id INTEGER PRIMARY KEY,
+    name TEXT NOT NULL UNIQUE,
+    active INTEGER NOT NULL DEFAULT 1,
+    added_by INTEGER REFERENCES users(id),
+    added_at TEXT
+);
+CREATE TABLE IF NOT EXISTS bending (
+    id INTEGER PRIMARY KEY,
+    user_id INTEGER NOT NULL REFERENCES users(id),
+    unit_id INTEGER REFERENCES units(id),
+    model TEXT NOT NULL,
+    qty INTEGER NOT NULL,
+    remarks TEXT,
+    done_at TEXT NOT NULL,         -- when the bending was done
+    entered_at TEXT NOT NULL       -- when it was entered (server time, cannot be changed)
+);
+CREATE INDEX IF NOT EXISTS idx_bending_done ON bending(done_at);
 CREATE TABLE IF NOT EXISTS masters_log (
     id INTEGER PRIMARY KEY,
     at TEXT NOT NULL,
@@ -393,6 +411,7 @@ def thickness_list():
 # what operators can add themselves: kind -> (table, label, cleaner)
 ITEM_KINDS = {
     "sheet": ("sheet_names", "sheet name", lambda v: (v or "").strip().upper()),
+    "model": ("bend_models", "model", lambda v: (v or "").strip().upper()),
     "thickness": ("thicknesses", "thickness", clean_code),
     "material": ("materials", "material", clean_code),
 }
@@ -581,6 +600,7 @@ MASTER_KINDS = {
     "material": ("materials", "material", "material", clean_code),
     "thickness": ("thicknesses", "thickness", "thickness", clean_code),
     "sheet": ("sheet_names", "sheet_name", "sheet name", lambda v: (v or "").strip().upper()),
+    "model": ("bend_models", "model", "model", lambda v: (v or "").strip().upper()),
 }
 
 
@@ -619,18 +639,19 @@ def rename_master(kind, item_id, raw):
             target = row["id"]
         n = recompute_codes("e.machine_id=?", (target,))
     else:
-        ids = [r[0] for r in db.execute(f"SELECT id FROM entries WHERE {col}=?", (old,))]
+        etab = "bending" if kind == "model" else "entries"
+        ids = [r[0] for r in db.execute(f"SELECT id FROM {etab} WHERE {col}=?", (old,))]
         other = db.execute(f"SELECT * FROM {table} WHERE name=? AND id<>?", (new, row["id"])).fetchone()
         if other:
             db.execute(f"UPDATE {table} SET active=1 WHERE id=?", (other["id"],))
             db.execute(f"DELETE FROM {table} WHERE id=?", (row["id"],))
         else:
             db.execute(f"UPDATE {table} SET name=? WHERE id=?", (new, row["id"]))
-        db.execute(f"UPDATE entries SET {col}=? WHERE {col}=?", (new, old))
+        db.execute(f"UPDATE {etab} SET {col}=? WHERE {col}=?", (new, old))
         if kind in ("material", "thickness"):
             db.execute(f"UPDATE stock_moves SET {col}=? WHERE {col}=?", (new, old))
         n = len(ids)
-        if ids and kind != "material":
+        if ids and kind not in ("material", "model"):
             recompute_codes(f"e.id IN ({','.join('?' * len(ids))})", ids)
     msg = f"{label.capitalize()} {old} changed to {new}"
     return "ok", msg + (f" ({n} old entries updated)." if n else ".")
@@ -643,7 +664,8 @@ def remove_master(kind, item_id):
     row = db.execute(f"SELECT * FROM {table} WHERE id=?", (item_id,)).fetchone()
     if not row:
         return "error", "Already removed."
-    used = db.execute(f"SELECT COUNT(*) FROM entries WHERE {col}=?",
+    etab = "bending" if kind == "model" else "entries"
+    used = db.execute(f"SELECT COUNT(*) FROM {etab} WHERE {col}=?",
                       (row["id"] if kind == "machine" else row["name"],)).fetchone()[0]
     if used:
         db.execute(f"UPDATE {table} SET active=0 WHERE id=?", (row["id"],))
@@ -703,7 +725,7 @@ def masters():
                 done(msg, cat, log=msg != "No change.")
         elif action.startswith("toggle_") and is_admin:
             table = {"machine": "machines", "material": "materials", "thickness": "thicknesses",
-                     "sheet": "sheet_names"}.get(action[7:])
+                     "sheet": "sheet_names", "model": "bend_models"}.get(action[7:])
             row = db.execute(f"SELECT * FROM {table} WHERE id=?", (f.get("id"),)).fetchone() if table else None
             if row:
                 db.execute(f"UPDATE {table} SET active=1-active WHERE id=?", (row["id"],))
@@ -724,7 +746,7 @@ def masters():
                               "WHERE m.active=1 AND m.unit_id=? ORDER BY m.name", (me["unit_id"],)).fetchall()
     thick = sorted(items("thicknesses"), key=lambda r: (-r["active"], thickness_key(r["name"])))
     return render_template("masters.html", machines=machines, materials=items("materials", "id"),
-                           thicknesses=thick, sheets=items("sheet_names"),
+                           thicknesses=thick, sheets=items("sheet_names"), models=items("bend_models"),
                            units=db.execute("SELECT * FROM units ORDER BY name").fetchall(),
                            log=db.execute("SELECT l.*, u.full_name FROM masters_log l LEFT JOIN users u "
                                           "ON u.id=l.user_id ORDER BY l.id DESC LIMIT 50").fetchall()
@@ -995,6 +1017,133 @@ def summary_csv():
             vals = [s["daily"].get(d, {}).get(u, 0) for u in s["op_ids"]]
             w.writerow([datetime.strptime(d, "%Y-%m-%d").strftime("%d-%m-%Y")] + vals + [sum(vals)])
     name = f"laser_summary_{s['period']}_{s['start'].isoformat()}.csv"
+    return Response("\ufeff" + out.getvalue(), mimetype="text/csv",
+                    headers={"Content-Disposition": f"attachment; filename={name}"})
+
+
+# ---------------------------------------------------------------- bending
+def bending_query(args, me, start, end):
+    where = "substr(b.done_at,1,10) BETWEEN ? AND ?"
+    params = [start.isoformat(), end.isoformat()]
+    if me["role"] != "admin":
+        where += " AND b.user_id=?"
+        params.append(me["id"])
+    else:
+        if args.get("unit"):
+            where += " AND b.unit_id=?"
+            params.append(args["unit"])
+        if args.get("user"):
+            where += " AND b.user_id=?"
+            params.append(args["user"])
+    if args.get("model"):
+        where += " AND b.model=?"
+        params.append(args["model"])
+    return where, params
+
+
+def bending_data(args, me):
+    period = args.get("period") if args.get("period") in ("day", "week", "month") else "day"
+    try:
+        day = datetime.strptime(args.get("date", ""), "%Y-%m-%d").date()
+    except ValueError:
+        day = now().date()
+    start, end, label, prev_day, next_day = period_range(period, day)
+    where, params = bending_query(args, me, start, end)
+    db = get_db()
+    rows = db.execute("SELECT b.*, us.full_name AS operator, un.name AS unit_name FROM bending b "
+                      "JOIN users us ON us.id=b.user_id LEFT JOIN units un ON un.id=b.unit_id "
+                      f"WHERE {where} ORDER BY b.done_at DESC, b.id DESC", params).fetchall()
+    models = sorted({r["model"] for r in rows})
+    ops = {}
+    for r in rows:
+        o = ops.setdefault(r["user_id"], {"operator": r["operator"], "unit": r["unit_name"] or "",
+                                          "cells": {}, "qty": 0, "entries": 0})
+        o["cells"][r["model"]] = o["cells"].get(r["model"], 0) + r["qty"]
+        o["qty"] += r["qty"]
+        o["entries"] += 1
+    operators = sorted(ops.values(), key=lambda o: -o["qty"])
+    totals = {m: sum(o["cells"].get(m, 0) for o in operators) for m in models}
+    return dict(period=period, date=day.isoformat(), label=label, start=start, end=end,
+                prev_day=prev_day.isoformat(), next_day=next_day.isoformat(), rows=rows,
+                models=models, operators=operators, totals=totals,
+                grand=sum(o["qty"] for o in operators))
+
+
+@app.route("/bending", methods=["GET", "POST"])
+@login_required
+def bending():
+    me = current_user()
+    is_admin = me["role"] == "admin"
+    db = get_db()
+    if request.method == "POST":
+        f = request.form
+        if f.get("action") == "delete":
+            row = db.execute("SELECT * FROM bending WHERE id=?", (f.get("id"),)).fetchone()
+            today = now().strftime("%Y-%m-%d")
+            if row and (is_admin or (row["user_id"] == me["id"] and row["entered_at"][:10] == today)):
+                db.execute("DELETE FROM bending WHERE id=?", (row["id"],))
+                db.commit()
+                flash(f"Deleted {row['model']} x {row['qty']}.", "ok")
+            else:
+                flash("You can delete only your own entries made today. Ask admin.", "error")
+            return redirect(request.referrer or url_for("bending"))
+        model = f.get("model", "").strip().upper()
+        try:
+            qty = int(f.get("qty") or "")
+        except ValueError:
+            qty = 0
+        done = parse_dt(f.get("done_at") or "") or now()
+        if not clean_code(model):
+            flash("Enter the model.", "error")
+        elif qty < 1:
+            flash("Enter quantity (1 or more).", "error")
+        elif done > now() + timedelta(minutes=5):
+            flash("Bending time cannot be in the future.", "error")
+        else:
+            db.execute("BEGIN IMMEDIATE")      # stop double saves from a double tap
+            dup = db.execute("SELECT 1 FROM bending WHERE user_id=? AND model=? AND qty=? "
+                             "AND (julianday(?)-julianday(entered_at))*86400 < 20",
+                             (me["id"], model, qty, now_str())).fetchone()
+            if dup:
+                db.rollback()
+                flash(f"{model} x {qty} was just saved. Not saved again.", "error")
+            else:
+                is_new = remember("bend_models", model, me["id"])
+                db.execute("INSERT INTO bending(user_id, unit_id, model, qty, remarks, done_at, entered_at) "
+                           "VALUES (?,?,?,?,?,?,?)",
+                           (me["id"], me["unit_id"], model, qty, f.get("remarks", "").strip(),
+                            done.strftime(TS_FMT), now_str()))
+                db.commit()
+                flash(f"Saved bending: {model} x {qty} pcs." + (" New model added to the list." if is_new else ""), "ok")
+        return redirect(url_for("bending"))
+
+    data = bending_data(request.args, me)
+    models = [r["name"] for r in db.execute("SELECT name FROM bend_models WHERE active=1 ORDER BY name")]
+    return render_template("bending.html", b=data, args=request.args, model_list=models,
+                           today=now().strftime("%Y-%m-%d"), now_local=now().strftime("%Y-%m-%dT%H:%M"),
+                           units=db.execute("SELECT * FROM units ORDER BY name").fetchall(),
+                           users=db.execute("SELECT * FROM users WHERE role='operator' ORDER BY full_name").fetchall())
+
+
+@app.route("/bending.csv")
+@login_required
+def bending_csv():
+    b = bending_data(request.args, current_user())
+    out = io.StringIO()
+    w = csv.writer(out)
+    w.writerow([f"Bending summary - {b['label']}"])
+    w.writerow([])
+    w.writerow(["Operator", "Unit"] + b["models"] + ["Total qty"])
+    for o in b["operators"]:
+        w.writerow([o["operator"], o["unit"]] + [o["cells"].get(m, 0) for m in b["models"]] + [o["qty"]])
+    w.writerow(["TOTAL", ""] + [b["totals"][m] for m in b["models"]] + [b["grand"]])
+    w.writerow([])
+    w.writerow(["All entries"])
+    w.writerow(["Bent at", "Entered at", "Operator", "Unit", "Model", "Qty", "Remarks"])
+    for r in b["rows"]:
+        w.writerow([r["done_at"], r["entered_at"], r["operator"], r["unit_name"] or "", r["model"], r["qty"],
+                    r["remarks"] or ""])
+    name = f"bending_{b['period']}_{b['start'].isoformat()}.csv"
     return Response("\ufeff" + out.getvalue(), mimetype="text/csv",
                     headers={"Content-Disposition": f"attachment; filename={name}"})
 

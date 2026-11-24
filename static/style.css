@@ -67,3 +67,4 @@ table.stock td.num, table.stock th.num { text-align:center; }
 .stockline.ok, .stockline.low, .stockline.neg { padding:8px 10px; border-radius:8px; }
 .stockline.ok { background:#dcfce7; color:#14532d; } .stockline.low { background:#fef3c7; color:#92400e; } .stockline.neg { background:#fee2e2; color:#7f1d1d; }
 .grid2.tight { gap:0 10px; grid-template-columns:repeat(auto-fit,minmax(140px,1fr)); }
+.btn.bend { background:#7c3aed; }
