@@ -50,7 +50,7 @@ Only finished sheets are counted. Operators see their own summary only.
 ## Bending
 
 Menu **Bending** (and the purple button on the operator home page): operator enters
-**model** and **quantity** (pick a model or type a new one and press "+ Add"); the entry
+**machine** (same list as laser entries), **model** and **quantity** (pick a model or type a new one and press "+ Add"); the entry
 time is recorded automatically and "bent at" can be changed for work done earlier.
 Daily / weekly / monthly qty per operator and model, Excel download. Models are
 managed on the Masters page (edit / remove like other lists).
