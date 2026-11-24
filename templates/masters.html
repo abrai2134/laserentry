@@ -78,6 +78,13 @@
     <div class="scrollbox"><ul id="modelList">{% for n in models %}<li><b>{{ n.name }}</b> <span class="muted small">{{ n.added_by_name or '' }}</span> {{ toggle('model', n, 'models') }}</li>
     {% else %}<li class="muted">None yet.</li>{% endfor %}</ul></div>
   </div>
+  <div class="card" id="persons">
+    <h2>Bending persons ({{ persons|length }})</h2>
+    <form method="post" class="row">{{ csrf() }}<input type="hidden" name="action" value="add_person"><input type="hidden" name="anchor" value="persons">
+      <input name="name" placeholder="e.g. Ramesh Patil" required><button class="btn">Add person</button></form>
+    <div class="scrollbox"><ul>{% for n in persons %}<li><b>{{ n.name }}</b> {{ toggle('person', n, 'persons') }}</li>
+    {% else %}<li class="muted">None yet.</li>{% endfor %}</ul></div>
+  </div>
 </div>
 
 {% if admin %}

@@ -1,0 +1,12 @@
+{# needs: b #}
+<h2>Out from bending (finished) qty by bending person and model</h2>
+<div class="tablewrap"><table class="pivot">
+  <thead><tr><th>Bending person</th>{% if me.role == 'admin' %}<th>Unit</th>{% endif %}{% for m in b.models %}<th class="num">{{ m }}</th>{% endfor %}<th class="num tot">Total qty</th></tr></thead>
+  <tbody>{% for o in b.operators %}
+    <tr><td><b>{{ o.operator }}</b></td>{% if me.role == 'admin' %}<td>{{ o.unit }}</td>{% endif %}
+      {% for m in b.models %}<td class="num">{{ o.cells.get(m) or '-' }}</td>{% endfor %}
+      <td class="num tot">{{ o.qty }}</td></tr>
+  {% else %}<tr><td colspan="3" class="muted">No bending entries in this period.</td></tr>{% endfor %}</tbody>
+  {% if b.operators %}<tfoot><tr><th>TOTAL</th>{% if me.role == 'admin' %}<th></th>{% endif %}{% for m in b.models %}<th class="num">{{ b.totals[m] }}</th>{% endfor %}<th class="num tot">{{ b.grand }}</th></tr></tfoot>{% endif %}
+</table></div>
+

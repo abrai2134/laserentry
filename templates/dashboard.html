@@ -20,7 +20,7 @@
 <h2>Bending on {{ day }} <a class="small" href="{{ url_for('bending', period='day', date=day) }}">open bending</a></h2>
 {% include '_bend_status.html' with context %}
 <div class="tablewrap"><table>
-  <thead><tr><th>Operator</th><th>Unit</th><th class="num">Given to bending</th><th class="num">Out from bending</th></tr></thead>
+  <thead><tr><th>Bending person</th><th>Unit</th><th class="num">Given to bending</th><th class="num">Out from bending</th></tr></thead>
   <tbody>{% for r in bend_ops %}<tr><td><b>{{ r.full_name }}</b></td><td>{{ r.unit_name or '' }}</td><td class="num">{{ r.given or '-' }}</td><td class="num"><b>{{ r.done or '-' }}</b></td></tr>
   {% else %}<tr><td colspan="4" class="muted">No bending entries this day.</td></tr>{% endfor %}</tbody>
 </table></div>
