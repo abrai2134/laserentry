@@ -121,6 +121,16 @@ CREATE TABLE IF NOT EXISTS bend_models (
     added_by INTEGER REFERENCES users(id),
     added_at TEXT
 );
+CREATE TABLE IF NOT EXISTS loaders (
+    id INTEGER PRIMARY KEY,
+    name TEXT NOT NULL,
+    unit_id INTEGER NOT NULL REFERENCES units(id),
+    active INTEGER NOT NULL DEFAULT 1,
+    absent_on TEXT,                -- date this loader is marked absent (skipped that day)
+    added_by INTEGER REFERENCES users(id),
+    added_at TEXT,
+    UNIQUE(name, unit_id)
+);
 CREATE TABLE IF NOT EXISTS bend_persons (
     id INTEGER PRIMARY KEY,
     name TEXT NOT NULL UNIQUE,
@@ -185,6 +195,10 @@ def init_db():
     if "out_at" not in cols:
         db.execute("ALTER TABLE bending ADD COLUMN out_at TEXT")
         db.execute("ALTER TABLE bending ADD COLUMN out_by INTEGER REFERENCES users(id)")
+    # older databases: no loaders on entries
+    if "loader1" not in [r[1] for r in db.execute("PRAGMA table_info(entries)")]:
+        db.execute("ALTER TABLE entries ADD COLUMN loader1 TEXT")
+        db.execute("ALTER TABLE entries ADD COLUMN loader2 TEXT")
     # older databases: OUT could only mean "bent"; now it can also be "sent without bending"
     if "out_kind" not in [r[1] for r in db.execute("PRAGMA table_info(bending)")]:
         db.execute("ALTER TABLE bending ADD COLUMN out_kind TEXT")
@@ -631,6 +645,7 @@ MASTER_KINDS = {
     "sheet": ("sheet_names", "sheet_name", "sheet name", lambda v: (v or "").strip().upper()),
     "model": ("bend_models", "model", "model", lambda v: (v or "").strip().upper()),
     "person": ("bend_persons", "person", "bending person", lambda v: " ".join((v or "").split()).title()),
+    "loader": ("loaders", None, "loader", lambda v: " ".join((v or "").split()).title()),
 }
 
 
@@ -656,6 +671,18 @@ def rename_master(kind, item_id, raw):
     old = row["name"]
     if new == old:
         return "ok", "No change."
+    if kind == "loader":
+        other = db.execute("SELECT * FROM loaders WHERE name=? AND unit_id=? AND id<>?",
+                           (new, row["unit_id"], row["id"])).fetchone()
+        if other:
+            db.execute("UPDATE loaders SET active=1 WHERE id=?", (other["id"],))
+            db.execute("DELETE FROM loaders WHERE id=?", (row["id"],))
+        else:
+            db.execute("UPDATE loaders SET name=? WHERE id=?", (new, row["id"]))
+        n = 0
+        for c in ("loader1", "loader2"):
+            n += db.execute(f"UPDATE entries SET {c}=? WHERE {c}=? AND unit_id=?", (new, old, row["unit_id"])).rowcount
+        return "ok", f"Loader {old} changed to {new}" + (f" ({n} old entries updated)." if n else ".")
     if kind == "machine":
         other = db.execute("SELECT * FROM machines WHERE name=? AND unit_id=? AND id<>?",
                            (new, row["unit_id"], row["id"])).fetchone()
@@ -694,9 +721,13 @@ def remove_master(kind, item_id):
     row = db.execute(f"SELECT * FROM {table} WHERE id=?", (item_id,)).fetchone()
     if not row:
         return "error", "Already removed."
-    etab = "bending" if kind in ("model", "person") else "entries"
-    used = db.execute(f"SELECT COUNT(*) FROM {etab} WHERE {col}=?",
-                      (row["id"] if kind == "machine" else row["name"],)).fetchone()[0]
+    if kind == "loader":
+        used = db.execute("SELECT COUNT(*) FROM entries WHERE unit_id=? AND (loader1=? OR loader2=?)",
+                          (row["unit_id"], row["name"], row["name"])).fetchone()[0]
+    else:
+        etab = "bending" if kind in ("model", "person") else "entries"
+        used = db.execute(f"SELECT COUNT(*) FROM {etab} WHERE {col}=?",
+                          (row["id"] if kind == "machine" else row["name"],)).fetchone()[0]
     if used:
         db.execute(f"UPDATE {table} SET active=0 WHERE id=?", (row["id"],))
         return "ok", (f"{row['name']} removed from the list. It is used in {used} old entries, "
@@ -734,6 +765,28 @@ def masters():
                 else:
                     db.execute("INSERT INTO machines(name, unit_id, added_by) VALUES (?,?,?)", (name, unit["id"], me["id"]))
                     done(f"Machine {name} added to {unit['name']}.")
+        elif action == "add_loader":
+            name = MASTER_KINDS["loader"][3](f.get("name"))
+            unit_id = f.get("unit_id") if (is_admin or not me["unit_id"]) else me["unit_id"]
+            unit = db.execute("SELECT * FROM units WHERE id=?", (unit_id,)).fetchone() if unit_id else None
+            if not name or not unit:
+                flash("Type the loader name and choose the unit.", "error")
+            else:
+                row = db.execute("SELECT * FROM loaders WHERE name=? AND unit_id=?", (name, unit["id"])).fetchone()
+                if row:
+                    db.execute("UPDATE loaders SET active=1 WHERE id=?", (row["id"],))
+                    done(f"{name} is already a loader in {unit['name']}.", log=bool(not row["active"]))
+                else:
+                    db.execute("INSERT INTO loaders(name, unit_id, added_by, added_at) VALUES (?,?,?,?)",
+                               (name, unit["id"], me["id"], now_str()))
+                    done(f"Loader {name} added to {unit['name']}.")
+        elif action == "absent_loader":
+            row = db.execute("SELECT * FROM loaders WHERE id=?", (f.get("id"),)).fetchone()
+            if row and (is_admin or not me["unit_id"] or row["unit_id"] == me["unit_id"]):
+                today = now().strftime("%Y-%m-%d")
+                absent = row["absent_on"] == today
+                db.execute("UPDATE loaders SET absent_on=? WHERE id=?", (None if absent else today, row["id"]))
+                done(f"Loader {row['name']} marked {'present' if absent else 'absent'} today.")
         elif action.startswith("add_") and action[4:] in ITEM_KINDS:
             table, label, cleaner = ITEM_KINDS[action[4:]]
             name = cleaner(f.get("name"))
@@ -745,7 +798,7 @@ def masters():
             table = MASTER_KINDS[kind][0]
             row = db.execute(f"SELECT * FROM {table} WHERE id=?", (f.get("id"),)).fetchone()
             # operators may change any item, but machines only in their own unit
-            other_unit = (kind == "machine" and not is_admin and me["unit_id"]
+            other_unit = (kind in ("machine", "loader") and not is_admin and me["unit_id"]
                           and row and row["unit_id"] != me["unit_id"])
             if not row or other_unit or (not is_admin and not row["active"]):
                 flash("You cannot change this item. Ask admin.", "error")
@@ -756,7 +809,7 @@ def masters():
         elif action.startswith("toggle_") and is_admin:
             table = {"machine": "machines", "material": "materials", "thickness": "thicknesses",
                      "sheet": "sheet_names", "model": "bend_models",
-                     "person": "bend_persons"}.get(action[7:])
+                     "person": "bend_persons", "loader": "loaders"}.get(action[7:])
             row = db.execute(f"SELECT * FROM {table} WHERE id=?", (f.get("id"),)).fetchone() if table else None
             if row:
                 db.execute(f"UPDATE {table} SET active=1-active WHERE id=?", (row["id"],))
@@ -778,10 +831,56 @@ def masters():
     thick = sorted(items("thicknesses"), key=lambda r: (-r["active"], thickness_key(r["name"])))
     return render_template("masters.html", machines=machines, materials=items("materials", "id"),
                            thicknesses=thick, sheets=items("sheet_names"), models=items("bend_models"), persons=items("bend_persons"),
+                           loaders=db.execute("SELECT l.*, u.name AS unit_name, l.absent_on=? AS absent FROM loaders l "
+                                              "JOIN units u ON u.id=l.unit_id "
+                                              + ("" if (is_admin or not me["unit_id"]) else
+                                                 f"WHERE l.unit_id={int(me['unit_id'])} AND l.active=1 ")
+                                              + "ORDER BY u.name, l.active DESC, l.name",
+                                              (now().strftime("%Y-%m-%d"),)).fetchall(),
                            units=db.execute("SELECT * FROM units ORDER BY name").fetchall(),
                            log=db.execute("SELECT l.*, u.full_name FROM masters_log l LEFT JOIN users u "
                                           "ON u.id=l.user_id ORDER BY l.id DESC LIMIT 50").fetchall()
                            if is_admin else [])
+
+
+# ---------------------------------------------------------------- loaders
+def pick_loaders(unit_id, n=2):
+    """Fair rotation: loaders of the unit (not absent today) with the fewest sheets today go first;
+    on a tie, the one who has waited longest since his last sheet. Returns up to n names."""
+    db = get_db()
+    today = now().strftime("%Y-%m-%d")
+    names = [r["name"] for r in db.execute(
+        "SELECT name FROM loaders WHERE unit_id=? AND active=1 AND (absent_on IS NULL OR absent_on<>?)",
+        (unit_id, today))]
+    if not names:
+        return []
+    load = {nm: [0, ""] for nm in names}
+    for r in db.execute("SELECT loader1, loader2, finished_at FROM entries WHERE unit_id=? AND "
+                        "(loader1 IS NOT NULL OR loader2 IS NOT NULL) ORDER BY finished_at", (unit_id,)):
+        for nm in (r["loader1"], r["loader2"]):
+            if nm in load:
+                if (r["finished_at"] or "")[:10] == today:
+                    load[nm][0] += 1
+                load[nm][1] = max(load[nm][1], r["finished_at"] or "")
+    return sorted(names, key=lambda nm: (load[nm][0], load[nm][1], nm))[:n]
+
+
+def loader_counts(start, end, unit_id=None, machine_id=None):
+    where, params = ["substr(e.finished_at,1,10) BETWEEN ? AND ?"], [start.isoformat(), end.isoformat()]
+    if unit_id:
+        where.append("e.unit_id=?")
+        params.append(unit_id)
+    if machine_id:
+        where.append("e.machine_id=?")
+        params.append(machine_id)
+    out = {}
+    for r in get_db().execute("SELECT e.loader1, e.loader2, un.name AS unit_name FROM entries e "
+                              f"JOIN units un ON un.id=e.unit_id WHERE {' AND '.join(where)}", params):
+        for nm in (r["loader1"], r["loader2"]):
+            if nm:
+                d = out.setdefault((nm, r["unit_name"]), {"loader": nm, "unit": r["unit_name"], "sheets": 0})
+                d["sheets"] += 1
+    return sorted(out.values(), key=lambda d: (d["unit"], -d["sheets"], d["loader"]))
 
 
 @app.route("/entry/<int:eid>/finish", methods=["POST"])
@@ -793,10 +892,17 @@ def finish_entry(eid):
     if not e or (e["user_id"] != me["id"] and me["role"] != "admin"):
         abort(404)
     if e["cut_end"] is None:
+        db.execute("BEGIN IMMEDIATE")          # two machines finishing together get different loaders
         t = now_str()
-        db.execute("UPDATE entries SET cut_end=?, finished_at=? WHERE id=?", (t, t, eid))
+        names = pick_loaders(e["unit_id"])
+        db.execute("UPDATE entries SET cut_end=?, finished_at=?, loader1=?, loader2=? WHERE id=? AND cut_end IS NULL",
+                   (t, t, names[0] if names else None, names[1] if len(names) > 1 else None, eid))
         db.commit()
         flash(f"{e['sheet_code']} finished.", "ok")
+        if names:
+            flash("🧑‍🔧 Loaders: " + " & ".join(names), "loaders")
+        else:
+            flash("No loaders set up for this unit. Add them on the Masters page.", "error")
     return redirect(request.referrer or url_for("home"))
 
 
@@ -889,14 +995,14 @@ def entries_csv():
     w = csv.writer(out)
     w.writerow(["ID", "Sheet Code", "Unit", "Machine", "Material", "Thickness", "Sheet Name", "Qty",
                 "Operator", "Cut Start", "Cut End", "Cut Minutes", "Entered At",
-                "Entry Delay (min)", "Mode", "Remarks"])
+                "Entry Delay (min)", "Mode", "Loader 1", "Loader 2", "Remarks"])
     for r in rows:
         w.writerow([r["id"], r["sheet_code"], r["unit_name"], r["machine_name"], r["material"],
                     r["thickness"], r["sheet_name"], r["qty"], r["operator"], r["cut_start"],
                     r["cut_end"] or "", _blank(minutes_between(r["cut_start"], r["cut_end"])),
                     r["entered_at"], minutes_between(r["cut_end"], r["entered_at"]) if r["mode"] == "manual" else 0,
                     "Live (Start/Finish)" if r["mode"] == "live" else "Manual (typed later)",
-                    r["remarks"] or ""])
+                    r["loader1"] or "", r["loader2"] or "", r["remarks"] or ""])
     name = f"laser_entries_{now().strftime('%Y%m%d_%H%M')}.csv"
     return Response("﻿" + out.getvalue(), mimetype="text/csv",
                     headers={"Content-Disposition": f"attachment; filename={name}"})
@@ -1015,7 +1121,9 @@ def summary():
     bend = bending_data({"period": data["period"], "date": data["date"], "unit": request.args.get("unit", ""),
                          "machine": request.args.get("machine", "")}, me)
     unit_scope = int(request.args["unit"]) if (me["role"] == "admin" and request.args.get("unit")) else None
+    lscope = unit_scope if me["role"] == "admin" else me["unit_id"]
     return render_template("summary.html", s=data, args=request.args, machines=machines, b=bend,
+                           loader_rows=loader_counts(data["start"], data["end"], lscope, request.args.get("machine")),
                            waiting=bending_waiting(me, unit_scope),
                            units=db.execute("SELECT * FROM units ORDER BY name").fetchall(),
                            materials=[m["name"] for m in material_list(active_only=False)])
@@ -1054,6 +1162,13 @@ def summary_csv():
     b = bending_data({"period": s["period"], "date": s["date"], "unit": request.args.get("unit", ""),
                       "machine": request.args.get("machine", "")}, current_user())
     w.writerow([])
+    me = current_user()
+    lscope = (request.args.get("unit") or None) if me["role"] == "admin" else me["unit_id"]
+    w.writerow([])
+    w.writerow(["Loaders - sheets unloaded"])
+    w.writerow(["Loader", "Unit", "Sheets"])
+    for d in loader_counts(s["start"], s["end"], lscope, request.args.get("machine")):
+        w.writerow([d["loader"], d["unit"], d["sheets"]])
     w.writerow([])
     write_bending_csv(w, b)
     name = f"laser_summary_{s['period']}_{s['start'].isoformat()}.csv"
@@ -1527,6 +1642,8 @@ def dashboard():
         "ORDER BY e.entered_at DESC", (day,)).fetchall()
     dday = datetime.strptime(day, "%Y-%m-%d").date()
     bend_rows = bending_status(None, dday, dday)
+    dday_ = datetime.strptime(day, "%Y-%m-%d").date()
+    loader_rows = loader_counts(dday_, dday_)
     bend_day = bending_data({"period": "day", "date": day}, current_user())
     bend_ops = bend_day["people"]
     bend_waiting = bending_waiting(current_user())
@@ -1539,7 +1656,7 @@ def dashboard():
         "JOIN machines m ON m.id=a.machine_id JOIN units un ON un.id=a.unit_id JOIN users us ON us.id=a.user_id "
         "WHERE substr(a.cut_start,1,10)=? ORDER BY a.cut_start", (day,)).fetchall()
     return render_template("dashboard.html", day=day, by_machine=by_machine, doubles=doubles,
-                           bend_rows=bend_rows, bend_ops=bend_ops, waiting=bend_waiting,
+                           bend_rows=bend_rows, bend_ops=bend_ops, waiting=bend_waiting, loader_rows=loader_rows,
                            units=db.execute("SELECT * FROM units ORDER BY name").fetchall(),
                            stock_rows=stock_balances(), low=LOW_STOCK,
                            by_operator=by_operator, running=running, late=late,

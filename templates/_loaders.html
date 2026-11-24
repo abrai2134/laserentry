@@ -1,0 +1,6 @@
+{# needs: loader_rows #}
+<div class="tablewrap"><table class="pivot">
+  <thead><tr><th>Loader</th><th>Unit</th><th class="num tot">Sheets unloaded</th></tr></thead>
+  <tbody>{% for d in loader_rows %}<tr><td><b>{{ d.loader }}</b></td><td>{{ d.unit }}</td><td class="num tot">{{ d.sheets }}</td></tr>
+  {% else %}<tr><td colspan="3" class="muted">No loader records in this period.</td></tr>{% endfor %}</tbody>
+</table></div>

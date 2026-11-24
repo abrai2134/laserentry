@@ -47,6 +47,14 @@ qty and cutting time, plus a day-wise table for the week or month.
 Filter by unit, machine or material and download it as Excel (CSV).
 Only finished sheets are counted. Operators see their own summary only.
 
+## Loaders
+
+Add loaders per unit on the **Masters** page. When an operator presses **FINISH**, the system
+shows 2 loader names in big text and saves them with the entry. Rotation is fair: loaders
+of that unit with the fewest sheets today go first; on a tie, the one who waited longest.
+Operators can mark a loader **absent today** (skipped until marked present / next day).
+Sheets per loader show on the Summary page, Dashboard and in the Excel files.
+
 ## Bending
 
 Menu **Bending** (purple button on the operator home page and admin dashboard).

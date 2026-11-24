@@ -70,6 +70,20 @@
 </div>
 
 <div class="grid2">
+  <div class="card" id="loaders">
+    <h2>Loaders ({{ loaders|length }})</h2>
+    <form method="post" class="row">{{ csrf() }}<input type="hidden" name="action" value="add_loader"><input type="hidden" name="anchor" value="loaders">
+      {% if admin or not me.unit_id %}<select name="unit_id" required>{% for u in units %}<option value="{{ u.id }}">{{ u.name }}</option>{% endfor %}</select>{% endif %}
+      <input name="name" placeholder="Loader name" required><button class="btn">Add loader</button></form>
+    <p class="muted small">On FINISH the system gives 2 loaders of that unit in turn (fewest sheets today first). Mark a loader absent so he is skipped today.</p>
+    <div class="scrollbox"><ul>{% for l in loaders %}<li>{% if admin or not me.unit_id %}{{ l.unit_name }} / {% endif %}<b>{{ l.name }}</b>
+      {% if l.active %}
+      <form method="post" class="inline">{{ csrf() }}<input type="hidden" name="action" value="absent_loader"><input type="hidden" name="id" value="{{ l.id }}"><input type="hidden" name="anchor" value="loaders">
+        {% if l.absent %}<span class="tag late">absent today</span> <button class="link">mark present</button>{% else %}<button class="link">mark absent today</button>{% endif %}</form>
+      {% endif %}
+      {{ toggle('loader', l, 'loaders') }}</li>
+    {% else %}<li class="muted">No loaders yet.</li>{% endfor %}</ul></div>
+  </div>
   <div class="card" id="persons">
     <h2>Bending persons ({{ persons|length }})</h2>
     <form method="post" class="row">{{ csrf() }}<input type="hidden" name="action" value="add_person"><input type="hidden" name="anchor" value="persons">

@@ -32,6 +32,9 @@
   {% else %}<tr><td colspan="6" class="muted">No bending entries this day.</td></tr>{% endfor %}</tbody>
 </table></div>
 
+<h2>Loaders on {{ day }}</h2>
+{% include '_loaders.html' with context %}
+
 <h2>Machines on {{ day }}</h2>
 <div class="tablewrap"><table>
   <thead><tr><th>Unit</th><th>Machine</th><th>Sheets</th><th>Pcs</th><th>Cutting time</th></tr></thead>

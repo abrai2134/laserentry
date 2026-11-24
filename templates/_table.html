@@ -4,7 +4,7 @@
   <thead><tr>
     <th>Sheet code</th>{% if me.role == 'admin' %}<th>Unit</th><th>Operator</th>{% endif %}
     <th>Machine</th><th>Mat.</th><th>Thk</th><th>Qty</th>
-    <th>Cut start</th><th>Cut end</th><th>Cut time</th><th>Entered at</th><th>Entry delay</th>
+    <th>Cut start</th><th>Cut end</th><th>Cut time</th><th>Loaders</th><th>Entered at</th><th>Entry delay</th>
     {% if me.role == 'admin' %}<th></th>{% endif %}
   </tr></thead>
   <tbody>
@@ -17,6 +17,7 @@
       <td>{{ r.cut_start|dt }}</td>
       <td>{% if r.cut_end %}{{ r.cut_end|dt }}{% else %}<span class="tag run">running</span>{% endif %}</td>
       <td>{{ fmt_minutes(minutes_between(r.cut_start, r.cut_end)) }}</td>
+      <td>{% if r.loader1 %}{{ r.loader1 }}{% if r.loader2 %}, {{ r.loader2 }}{% endif %}{% else %}-{% endif %}</td>
       <td>{{ r.entered_at|dt }}</td>
       <td>{% if r.mode == 'live' %}<span class="tag ok">live</span>{% elif delay is not none and delay > 60 %}<span class="tag late">{{ fmt_minutes(delay) }}</span>{% else %}{{ fmt_minutes(delay) }}{% endif %}</td>
       {% if me.role == 'admin' %}<td>
@@ -25,7 +26,7 @@
         </form></td>{% endif %}
     </tr>
   {% else %}
-    <tr><td colspan="14" class="muted">No entries.</td></tr>
+    <tr><td colspan="15" class="muted">No entries.</td></tr>
   {% endfor %}
   </tbody>
 </table>

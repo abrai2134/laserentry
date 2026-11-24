@@ -73,6 +73,9 @@
 </div>
 {% endif %}
 
+<h2>Loaders ({{ s.label }})</h2>
+{% include '_loaders.html' with context %}
+
 <h1 style="margin-top:30px">Bending · {{ s.label }}</h1>
 <div class="stats">
   <div class="stat"><b>{{ b.given_total }}</b><span>given to bending (pcs)</span></div>
