@@ -1,0 +1,1 @@
+{% if r.status == 'in' and r.out_at %}<span class="tag ok">out DONE</span>{% elif r.status == 'in' %}<span class="tag run">in bending</span>{% elif r.status == 'out' %}<span class="tag ok">out DONE</span>{% else %}<span class="tag direct">without bending</span>{% endif %}

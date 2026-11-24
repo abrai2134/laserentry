@@ -180,6 +180,11 @@ def close_db(_exc):
 def init_db():
     db = sqlite3.connect(DB_PATH)
     db.executescript(SCHEMA)
+    # older databases: bending had no OUT time (the OUT button on a 'given' entry fills it)
+    cols = [r[1] for r in db.execute("PRAGMA table_info(bending)")]
+    if "out_at" not in cols:
+        db.execute("ALTER TABLE bending ADD COLUMN out_at TEXT")
+        db.execute("ALTER TABLE bending ADD COLUMN out_by INTEGER REFERENCES users(id)")
     # older databases: bending had no destination unit
     if "to_unit_id" not in [r[1] for r in db.execute("PRAGMA table_info(bending)")]:
         db.execute("ALTER TABLE bending ADD COLUMN to_unit_id INTEGER REFERENCES units(id)")
@@ -259,7 +264,7 @@ def fmt_minutes(m):
     return f"{sign}{m // 1440}d {(m % 1440) // 60}h"
 
 
-app.jinja_env.globals.update(fmt_minutes=fmt_minutes, minutes_between=minutes_between)
+app.jinja_env.globals.update(fmt_minutes=fmt_minutes, minutes_between=minutes_between, now_str=lambda: now_str())
 
 
 @app.template_filter("secs")
@@ -1055,8 +1060,9 @@ PERSON_SQL = "COALESCE(NULLIF(b.person,''), us.full_name)"   # old rows: the log
 
 
 def bending_query(args, me, start, end):
-    where = "substr(b.done_at,1,10) BETWEEN ? AND ?"
-    params = [start.isoformat(), end.isoformat()]
+    # an entry belongs to the period if it was given / sent OR taken out in it
+    where = "(substr(b.done_at,1,10) BETWEEN ? AND ? OR substr(b.out_at,1,10) BETWEEN ? AND ?)"
+    params = [start.isoformat(), end.isoformat(), start.isoformat(), end.isoformat()]
     if me["role"] != "admin":
         where += " AND b.user_id=?"
         params.append(me["id"])
@@ -1081,23 +1087,48 @@ def bending_query(args, me, start, end):
 
 BEND_STATUS = {"in": "Given to bending", "out": "Out from bending", "direct": "Sent without bending"}
 NEEDS_TO_UNIT = ("out", "direct")       # these must say which unit the parts went to
+# Flow: an operator saves "Given to bending" (IN); when bending is finished someone presses OUT on that line,
+# which stores the OUT time and the unit it went to. Older separate "out" rows still count as out.
+
+
+def in_period(ts, start, end):
+    return bool(ts) and start.isoformat() <= ts[:10] <= end.isoformat()
 
 
 def bending_status(unit_id=None, start=None, end=None):
-    """Per unit: qty given / out / sent without bending in the period, and pending in bending now (all IN - all OUT)."""
+    """Per unit: qty given / out / sent without bending in the period, and pending in bending now."""
     db = get_db()
     where, params = ("WHERE b.unit_id=?", [unit_id]) if unit_id else ("", [])
-    s_, e_ = (start.isoformat(), end.isoformat()) if start else ("", "")
-    per = "AND substr(b.done_at,1,10) BETWEEN ? AND ? THEN b.qty ELSE 0 END)"
-    rows = db.execute(
-        "SELECT b.unit_id, un.name AS unit_name, "
-        "SUM(CASE WHEN b.status='in' THEN b.qty ELSE 0 END) - SUM(CASE WHEN b.status='out' THEN b.qty ELSE 0 END) AS pending, "
-        f"SUM(CASE WHEN b.status='in' {per} AS given, "
-        f"SUM(CASE WHEN b.status='out' {per} AS done, "
-        f"SUM(CASE WHEN b.status='direct' {per} AS direct "
-        f"FROM bending b LEFT JOIN units un ON un.id=b.unit_id {where} GROUP BY b.unit_id ORDER BY un.name",
-        [s_, e_, s_, e_, s_, e_] + params).fetchall()
-    return [dict(r) for r in rows if r["pending"] or r["given"] or r["done"] or r["direct"]]
+    rows = db.execute("SELECT b.unit_id, un.name AS unit_name, b.status, b.qty, b.done_at, b.out_at FROM bending b "
+                      f"LEFT JOIN units un ON un.id=b.unit_id {where}", params).fetchall()
+    out = {}
+    for r in rows:
+        d = out.setdefault(r["unit_id"], {"unit_id": r["unit_id"], "unit_name": r["unit_name"],
+                                          "given": 0, "done": 0, "direct": 0, "pending": 0})
+        if r["status"] == "in":
+            if not r["out_at"]:
+                d["pending"] += r["qty"]
+            if start and in_period(r["done_at"], start, end):
+                d["given"] += r["qty"]
+            if start and in_period(r["out_at"], start, end):
+                d["done"] += r["qty"]
+        elif start and in_period(r["done_at"], start, end):
+            d["done" if r["status"] == "out" else "direct"] += r["qty"]
+    return sorted((d for d in out.values() if d["pending"] or d["given"] or d["done"] or d["direct"]),
+                  key=lambda d: d["unit_name"] or "")
+
+
+def bending_waiting(me, unit_id=None):
+    """'Given to bending' entries still waiting for OUT (operators see their unit)."""
+    where, params = "b.status='in' AND b.out_at IS NULL", []
+    scope = unit_id or (me["unit_id"] if me["role"] != "admin" else None)
+    if scope:
+        where += " AND b.unit_id=?"
+        params.append(scope)
+    return get_db().execute(
+        f"SELECT b.*, {PERSON_SQL} AS person_name, un.name AS unit_name, m.name AS machine_name FROM bending b "
+        "JOIN users us ON us.id=b.user_id LEFT JOIN units un ON un.id=b.unit_id "
+        f"LEFT JOIN machines m ON m.id=b.machine_id WHERE {where} ORDER BY b.done_at", params).fetchall()
 
 
 def bending_data(args, me):
@@ -1115,23 +1146,66 @@ def bending_data(args, me):
                       "LEFT JOIN units tu ON tu.id=b.to_unit_id LEFT JOIN machines m ON m.id=b.machine_id "
                       f"WHERE {where} ORDER BY b.done_at DESC, b.id DESC", params).fetchall()
     people, sent = {}, {}
-    for r in rows:
+    tot = {"in": 0, "out": 0, "direct": 0}
+
+    def add(r, key, sent_key=None):
         p = people.setdefault(r["person_name"], {"person": r["person_name"], "unit": r["unit_name"] or "",
-                                                 "in": 0, "out": 0, "direct": 0})
-        p[r["status"]] = p.get(r["status"], 0) + r["qty"]
-        if r["status"] in NEEDS_TO_UNIT:
+                                                 "in": 0, "out": 0, "direct": 0, "mins": 0, "timed": 0})
+        p[key] += r["qty"]
+        tot[key] += r["qty"]
+        if sent_key:
             k = (r["unit_name"] or "-", r["to_unit_name"] or "-")
             d = sent.setdefault(k, {"from": k[0], "to": k[1], "out": 0, "direct": 0})
-            d[r["status"]] += r["qty"]
-    people = sorted(people.values(), key=lambda p: -p["out"])
+            d[sent_key] += r["qty"]
+        return p
+
+    for r in rows:
+        if r["status"] == "in":
+            if in_period(r["done_at"], start, end):
+                add(r, "in")
+            if in_period(r["out_at"], start, end):
+                p = add(r, "out", "out")
+                p["mins"] += minutes_between(r["done_at"], r["out_at"]) or 0
+                p["timed"] += 1
+        elif in_period(r["done_at"], start, end):
+            add(r, r["status"], r["status"])
+    for p in people.values():
+        p["avg"] = round(p["mins"] / p["timed"]) if p["timed"] else None
     unit_scope = (me["unit_id"] if me["role"] != "admin" and me["unit_id"] else
                   (int(args["unit"]) if me["role"] == "admin" and args.get("unit") else None))
-    tot = {k: sum(r["qty"] for r in rows if r["status"] == k) for k in BEND_STATUS}
     return dict(period=period, date=day.isoformat(), label=label, start=start, end=end,
                 prev_day=prev_day.isoformat(), next_day=next_day.isoformat(), rows=rows,
-                people=people, sent=sorted(sent.values(), key=lambda d: (d["from"], d["to"])),
+                people=sorted(people.values(), key=lambda p: -p["out"]),
+                sent=sorted(sent.values(), key=lambda d: (d["from"], d["to"])),
                 status_rows=bending_status(unit_scope, start, end),
                 given_total=tot["in"], grand=tot["out"], direct_total=tot["direct"])
+
+
+@app.route("/bending/<int:bid>/out", methods=["POST"])
+@login_required
+def bending_out(bid):
+    """OUT button on a 'Given to bending' line: bending finished, record time and destination unit."""
+    me = current_user()
+    db = get_db()
+    row = db.execute("SELECT * FROM bending WHERE id=?", (bid,)).fetchone()
+    to_unit = db.execute("SELECT * FROM units WHERE id=?", (request.form.get("to_unit_id"),)).fetchone()
+    back = request.form.get("back") or url_for("bending")
+    if not row or row["status"] != "in":
+        abort(404)
+    if me["role"] != "admin" and me["unit_id"] and row["unit_id"] != me["unit_id"]:
+        flash("This entry belongs to another unit.", "error")
+    elif row["out_at"]:
+        flash("Already marked OUT.", "error")
+    elif not to_unit:
+        flash("Select to which unit it is sent, then press OUT.", "error")
+    else:
+        t = now_str()
+        db.execute("UPDATE bending SET out_at=?, out_by=?, to_unit_id=? WHERE id=? AND out_at IS NULL",
+                   (t, me["id"], to_unit["id"], bid))
+        db.commit()
+        flash(f"OUT from bending: {row['qty']} pcs ({row['person'] or ''}) sent to {to_unit['name']}. "
+              f"Bending took {fmt_minutes(minutes_between(row['done_at'], t))}.", "ok")
+    return redirect(back)
 
 
 @app.route("/bending", methods=["GET", "POST"])
@@ -1162,8 +1236,8 @@ def bending():
         status = f.get("status")
         machine = next((m for m in machines_for(me) if str(m["id"]) == f.get("machine_id")), None)
         to_unit = next((u for u in units if str(u["id"]) == f.get("to_unit_id")), None)
-        if status not in BEND_STATUS:
-            flash("Choose status: Given to bending, Out from bending or Sent without bending.", "error")
+        if status not in ("in", "direct"):
+            flash("Choose: Given to bending or Sent without bending.", "error")
         elif not machine:
             flash("Select the machine.", "error")
         elif not person:
@@ -1200,18 +1274,21 @@ def bending():
                     "id": cur.lastrowid,
                     "text": f"Saved: {BEND_STATUS[status]} - {qty} pcs by {person} on {machine['name']}"
                             + (f", sent to {to_unit['name']}" if to_id else "")
-                            + f". Pending in bending now: {pend} pcs."}
+                            + f". Pending in bending now: {pend} pcs."
+                            + (" Press OUT on this line when bending is finished." if status == "in" else "")}
                 return redirect(url_for("bending") + "#recent")
         return redirect(url_for("bending"))
 
     data = bending_data(request.args, me)
     persons = [r["name"] for r in db.execute("SELECT name FROM bend_persons WHERE active=1 ORDER BY name")]
-    recent = db.execute(f"SELECT b.*, {PERSON_SQL} AS person_name, tu.name AS to_unit_name, m.name AS machine_name "
+    recent = db.execute(f"SELECT b.*, {PERSON_SQL} AS person_name, tu.name AS to_unit_name, m.name AS machine_name, "
+                        "un.name AS unit_name "
                         "FROM bending b JOIN users us ON us.id=b.user_id LEFT JOIN units tu ON tu.id=b.to_unit_id "
+                        "LEFT JOIN units un ON un.id=b.unit_id "
                         "LEFT JOIN machines m ON m.id=b.machine_id WHERE b.user_id=? "
                         "ORDER BY b.id DESC LIMIT 5", (me["id"],)).fetchall()
     return render_template("bending.html", b=data, args=request.args, person_list=persons,
-                           recent=recent, saved=session.pop("bend_saved", None),
+                           recent=recent, saved=session.pop("bend_saved", None), waiting=bending_waiting(me),
                            last_person=session.get("bend_person", ""), statuses=BEND_STATUS,
                            machines=machines_for(me), last_machine=session.get("bend_machine"),
                            all_machines=db.execute("SELECT m.*, u.name AS unit_name FROM machines m JOIN units u "
@@ -1225,9 +1302,10 @@ def bending():
 def write_bending_csv(w, b):
     w.writerow([f"Bending - {b['label']}: given {b['given_total']}, out {b['grand']}, "
                 f"sent without bending {b['direct_total']}"])
-    w.writerow(["Bending person", "Unit", "Given to bending", "Out from bending", "Sent without bending"])
+    w.writerow(["Bending person", "Unit", "Given to bending", "Out from bending", "Sent without bending",
+                "Avg bending time (min)"])
     for p in b["people"]:
-        w.writerow([p["person"], p["unit"], p["in"], p["out"], p["direct"]])
+        w.writerow([p["person"], p["unit"], p["in"], p["out"], p["direct"], p["avg"] if p["avg"] is not None else ""])
     w.writerow(["TOTAL", "", b["given_total"], b["grand"], b["direct_total"]])
     w.writerow([])
     w.writerow(["Sent to units"])
@@ -1249,10 +1327,13 @@ def bending_csv():
     write_bending_csv(w, b)
     w.writerow([])
     w.writerow(["All entries"])
-    w.writerow(["Date/time", "Entered at", "Status", "Bending person", "Entered by", "Unit", "Machine",
-                "Sent to unit", "Qty", "Model (old entries)", "Remarks"])
+    w.writerow(["Given / sent at", "Entered at", "Status", "OUT at", "Bending time (min)", "Bending person",
+                "Entered by", "Unit", "Machine", "Sent to unit", "Qty", "Model (old entries)", "Remarks"])
     for r in b["rows"]:
-        w.writerow([r["done_at"], r["entered_at"], BEND_STATUS.get(r["status"], r["status"]), r["person_name"],
+        st = ("Out from bending" if r["out_at"] else "In bending (waiting)") if r["status"] == "in" \
+            else BEND_STATUS.get(r["status"], r["status"])
+        w.writerow([r["done_at"], r["entered_at"], st, r["out_at"] or "",
+                    _blank(minutes_between(r["done_at"], r["out_at"])), r["person_name"],
                     r["operator"], r["unit_name"] or "", r["machine_name"] or "", r["to_unit_name"] or "",
                     r["qty"], r["model"] or "", r["remarks"] or ""])
     name = f"bending_{b['period']}_{b['start'].isoformat()}.csv"
@@ -1372,6 +1453,8 @@ def stock():
                        "JOIN units u ON u.id=s.unit_id LEFT JOIN users us ON us.id=s.user_id "
                        f"{mwhere} ORDER BY s.at DESC, s.id DESC LIMIT 100", mparams).fetchall()
     return render_template("stock.html", rows=rows, moves=moves, low=LOW_STOCK, unit_filter=str(unit_filter or ""),
+                           bend_rows=bending_status(int(unit_filter) if unit_filter else None, now().date(), now().date()),
+                           waiting=bending_waiting(me, int(unit_filter) if unit_filter else None),
                            units=db.execute("SELECT * FROM units ORDER BY name").fetchall(),
                            materials=[m["name"] for m in material_list()], thicknesses=thickness_list(),
                            now_local=now().strftime("%Y-%m-%dT%H:%M"))
@@ -1424,13 +1507,9 @@ def dashboard():
         "ORDER BY e.entered_at DESC", (day,)).fetchall()
     dday = datetime.strptime(day, "%Y-%m-%d").date()
     bend_rows = bending_status(None, dday, dday)
-    bend_ops = db.execute(
-        f"SELECT {PERSON_SQL} AS full_name, un.name AS unit_name, "
-        "SUM(CASE WHEN b.status='in' THEN b.qty ELSE 0 END) AS given, "
-        "SUM(CASE WHEN b.status='out' THEN b.qty ELSE 0 END) AS done, "
-        "SUM(CASE WHEN b.status='direct' THEN b.qty ELSE 0 END) AS direct FROM bending b "
-        "JOIN users us ON us.id=b.user_id LEFT JOIN units un ON un.id=b.unit_id "
-        "WHERE substr(b.done_at,1,10)=? GROUP BY 1 ORDER BY done DESC", (day,)).fetchall()
+    bend_day = bending_data({"period": "day", "date": day}, current_user())
+    bend_ops = bend_day["people"]
+    bend_waiting = bending_waiting(current_user())
     doubles = db.execute(
         "SELECT a.id AS id1, b.id AS id2, a.sheet_code, a.cut_start AS start1, b.cut_start AS start2, "
         "a.entered_at AS ent1, b.entered_at AS ent2, m.name AS machine_name, un.name AS unit_name, "
@@ -1440,7 +1519,8 @@ def dashboard():
         "JOIN machines m ON m.id=a.machine_id JOIN units un ON un.id=a.unit_id JOIN users us ON us.id=a.user_id "
         "WHERE substr(a.cut_start,1,10)=? ORDER BY a.cut_start", (day,)).fetchall()
     return render_template("dashboard.html", day=day, by_machine=by_machine, doubles=doubles,
-                           bend_rows=bend_rows, bend_ops=bend_ops,
+                           bend_rows=bend_rows, bend_ops=bend_ops, waiting=bend_waiting,
+                           units=db.execute("SELECT * FROM units ORDER BY name").fetchall(),
                            stock_rows=stock_balances(), low=LOW_STOCK,
                            by_operator=by_operator, running=running, late=late,
                            now_ts=now_str())

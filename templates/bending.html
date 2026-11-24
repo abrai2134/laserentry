@@ -9,11 +9,11 @@
   <h2>✚ New bending entry</h2>
   <p class="muted small">Entry time is recorded automatically.</p>
   <label>Status</label>
-  <div class="statuspick three">
+  <div class="statuspick">
     <label class="chip st-in"><input type="radio" name="status" value="in" required><span>⬇ Given to bending (IN)</span></label>
-    <label class="chip st-out"><input type="radio" name="status" value="out" required><span>✔ Out from bending (DONE)</span></label>
     <label class="chip st-direct"><input type="radio" name="status" value="direct" required><span>➜ Sent without bending</span></label>
   </div>
+  <p class="muted small">When bending is finished, press <b>✔ OUT</b> on that line below. The OUT time is recorded and the bending time is calculated.</p>
   {% if machines %}
   <label>Machine
     <select name="machine_id" required>
@@ -43,13 +43,18 @@
   <button class="btn big start">SAVE BENDING</button>
 </form>
 
+<div class="card" id="waiting">
+  <h2>⏳ In bending now ({{ waiting|length }}) - press OUT when finished</h2>
+  {% include '_bend_waiting.html' with context %}
+</div>
+
 <div class="card" id="recent">
   {% if saved %}<div class="flash ok big-ok">✔ {{ saved.text }}</div>{% endif %}
   <h2>My last bending entries</h2>
   <div class="tablewrap"><table>
     <thead><tr><th>Status</th><th class="num">Qty</th><th>Person</th><th>Machine</th><th>Sent to</th><th>Date / time</th></tr></thead>
     <tbody>{% for r in recent %}
-      <tr class="{{ 'justsaved' if saved and saved.id == r.id }}"><td>{% if r.status == 'in' %}<span class="tag run">given IN</span>{% elif r.status == 'out' %}<span class="tag ok">out DONE</span>{% else %}<span class="tag direct">without bending</span>{% endif %}</td>
+      <tr class="{{ 'justsaved' if saved and saved.id == r.id }}"><td>{% include '_bend_tag.html' %}</td>
         <td class="num"><b>{{ r.qty }}</b></td><td>{{ r.person_name }}</td><td>{{ r.machine_name or '-' }}</td><td>{{ r.to_unit_name or '-' }}</td><td>{{ r.done_at|dt }}</td></tr>
     {% else %}<tr><td colspan="6" class="muted">No entries yet.</td></tr>{% endfor %}</tbody>
   </table></div>
@@ -83,13 +88,14 @@
 
 <h2>Entries</h2>
 <div class="tablewrap"><table>
-  <thead><tr><th>Status</th><th class="num">Qty</th><th>Bending person</th><th>Machine</th><th>Sent to</th>{% if admin %}<th>Entered by</th><th>Unit</th>{% endif %}<th>Date / time</th><th>Entered at</th><th>Remarks</th><th></th></tr></thead>
+  <thead><tr><th>Status</th><th class="num">Qty</th><th>Bending person</th><th>Machine</th><th>Sent to</th><th>OUT at</th><th>Bending time</th>{% if admin %}<th>Entered by</th><th>Unit</th>{% endif %}<th>Given / sent at</th><th>Entered at</th><th>Remarks</th><th></th></tr></thead>
   <tbody>{% for r in b.rows %}
-    <tr><td>{% if r.status == 'in' %}<span class="tag run">given IN</span>{% elif r.status == 'out' %}<span class="tag ok">out DONE</span>{% else %}<span class="tag direct">without bending</span>{% endif %}</td><td class="num"><b>{{ r.qty }}</b></td><td><b>{{ r.person_name }}</b></td><td>{{ r.machine_name or '-' }}</td><td>{{ r.to_unit_name or '-' }}</td>{% if admin %}<td>{{ r.operator }}</td><td>{{ r.unit_name or '' }}</td>{% endif %}
+    <tr><td>{% include '_bend_tag.html' %}</td><td class="num"><b>{{ r.qty }}</b></td><td><b>{{ r.person_name }}</b></td><td>{{ r.machine_name or '-' }}</td><td>{{ r.to_unit_name or '-' }}</td>
+      <td>{{ r.out_at|dt if r.out_at else '-' }}</td><td>{{ fmt_minutes(minutes_between(r.done_at, r.out_at)) if r.out_at else '-' }}</td>{% if admin %}<td>{{ r.operator }}</td><td>{{ r.unit_name or '' }}</td>{% endif %}
       <td>{{ r.done_at|dt }}</td><td>{{ r.entered_at|dt }}</td><td style="white-space:normal">{{ r.remarks or '' }}</td>
       <td>{% if admin or (r.user_id == me.id and r.entered_at[:10] == today) %}
         <form method="post" class="inline" onsubmit="return confirm('Delete this entry ({{ r.qty }} pcs)?')">{{ csrf() }}<input type="hidden" name="action" value="delete"><input type="hidden" name="id" value="{{ r.id }}"><button class="link danger">delete</button></form>{% endif %}</td></tr>
-  {% else %}<tr><td colspan="11" class="muted">No entries.</td></tr>{% endfor %}</tbody>
+  {% else %}<tr><td colspan="13" class="muted">No entries.</td></tr>{% endfor %}</tbody>
 </table></div>
 
 <script>
@@ -123,7 +129,7 @@
     const box = document.getElementById('toUnitBox'), sel = document.getElementById('toUnit');
     function upd() {
       const st = document.querySelector('input[name=status]:checked');
-      const need = st && (st.value === 'out' || st.value === 'direct');
+      const need = st && st.value === 'direct';
       box.style.display = need ? 'block' : 'none';
       sel.required = !!need;
     }

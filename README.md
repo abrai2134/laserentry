@@ -49,13 +49,16 @@ Only finished sheets are counted. Operators see their own summary only.
 
 ## Bending
 
-Menu **Bending** (and the purple button on the operator home page). Each entry has:
-status **Given to bending (IN)**, **Out from bending (DONE)** or **Sent without bending**,
-machine, **bending person** (list on Masters), quantity, date/time (entry time is recorded
-automatically). For "Out" and "Sent without bending" the **unit it was sent to** is required.
-Pending in bending = all IN - all OUT per unit. Tables by bending person and by
-"sent to unit", daily / weekly / monthly, on the Bending page, Summary page, Dashboard
-and in the Excel downloads.
+Menu **Bending** (purple button on the operator home page and admin dashboard).
+1. Save **Given to bending (IN)** with machine, bending person, quantity (time recorded).
+2. When bending is finished, press **✔ OUT** on that line in "In bending now" (Bending page,
+   Stock page or Dashboard) and choose the unit it is sent to. OUT time is recorded and the
+   **bending time** (OUT - IN) is shown, with average per person.
+3. **Sent without bending** is saved from the form with the unit it was sent to.
+
+Pending in bending = IN entries not yet OUT. Tables by bending person (given / out / sent
+without bending / avg time) and by "sent to unit", daily / weekly / monthly, on the Bending,
+Summary and Stock pages, the Dashboard and in the Excel downloads.
 
 ## Sheet stock
 

@@ -1,0 +1,15 @@
+{# needs: waiting, units, now_ts (optional) #}
+<div class="tablewrap"><table class="waiting">
+  <thead><tr><th>Given at</th><th class="num">Qty</th><th>Bending person</th><th>Machine</th>{% if me.role == 'admin' or not me.unit_id %}<th>Unit</th>{% endif %}<th>In bending for</th><th>Finished? Send to unit → OUT</th></tr></thead>
+  <tbody>{% for r in waiting %}
+    <tr><td>{{ r.done_at|dt }}</td><td class="num"><b>{{ r.qty }}</b></td><td><b>{{ r.person_name }}</b></td><td>{{ r.machine_name or '-' }}</td>
+      {% if me.role == 'admin' or not me.unit_id %}<td>{{ r.unit_name or '' }}</td>{% endif %}
+      <td><span class="tag run">{{ fmt_minutes(minutes_between(r.done_at, now_str())) }}</span></td>
+      <td><form method="post" action="{{ url_for('bending_out', bid=r.id) }}" class="outform"
+                onsubmit="return confirm('Bending finished? Mark {{ r.qty }} pcs OUT now?')">
+        <input type="hidden" name="csrf" value="{{ csrf_token }}"><input type="hidden" name="back" value="{{ request.full_path }}">
+        <select name="to_unit_id" required>{% for u in units %}<option value="{{ u.id }}" {{ 'selected' if u.id == r.unit_id }}>{{ u.name }}</option>{% endfor %}</select>
+        <button class="btn outbtn">✔ OUT</button>
+      </form></td></tr>
+  {% else %}<tr><td colspan="7" class="muted">Nothing waiting in bending.</td></tr>{% endfor %}</tbody>
+</table></div>

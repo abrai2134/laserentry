@@ -54,6 +54,11 @@
 {% set stock_rows = rows %}{% set full = true %}
 {% include '_stock_table.html' with context %}
 
+<h2>Bending (today)</h2>
+{% include '_bend_status.html' with context %}
+<h3>⏳ In bending now ({{ waiting|length }})</h3>
+{% include '_bend_waiting.html' with context %}
+
 <h2>Received &amp; count history (last 100)</h2>
 <div class="tablewrap"><table>
   <thead><tr><th>Date</th>{% if pick_unit %}<th>Unit</th>{% endif %}<th>Material</th><th>Thk</th><th>Type</th><th class="num">Sheets</th><th>Challan / note</th><th>By</th>{% if admin %}<th></th>{% endif %}</tr></thead>

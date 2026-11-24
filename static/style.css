@@ -81,3 +81,7 @@ table.stock td.num, table.stock th.num { text-align:center; }
 .big-ok { font-size:16px; font-weight:700; }
 tr.justsaved td { background:#dcfce7; }
 #recent { scroll-margin-top:10px; }
+.outform { display:flex; gap:6px; align-items:center; margin:0; }
+.outform select { width:auto; margin:0; padding:6px 8px; }
+.btn.outbtn { background:var(--go); padding:8px 14px; white-space:nowrap; }
+#waiting h2 { margin-top:0; }
