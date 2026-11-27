@@ -3,11 +3,24 @@
 <div class="tablewrap"><table class="stock">
   <thead><tr>{% if multi %}<th>Unit</th>{% endif %}<th>Mat.</th><th>Thk</th>
     {% if full %}<th class="num">Received</th><th class="num">Count corr.</th><th class="num">Used (cut)</th>{% endif %}
-    <th class="num">Used today</th><th class="num">Pending</th></tr></thead>
+    <th class="num">Used today</th><th class="num">Pending</th>{% if full and me.role == 'admin' %}<th></th>{% endif %}</tr></thead>
   <tbody>{% for d in stock_rows %}
     <tr>{% if multi %}<td>{{ d.unit_name }}</td>{% endif %}<td><b>{{ d.material }}</b></td><td><b>{{ d.thickness }}</b></td>
       {% if full %}<td class="num">{{ d.received }}</td><td class="num">{{ '%+d'|format(d.counted) if d.counted else '-' }}</td><td class="num">{{ d.used }}</td>{% endif %}
       <td class="num">{{ d.used_today or '-' }}</td>
-      <td class="num"><span class="bal {{ 'neg' if d.balance < 0 else ('low' if d.balance <= low else 'ok') }}">{{ d.balance }}</span></td></tr>
-  {% else %}<tr><td colspan="8" class="muted">No stock recorded yet. Add material received on the Stock page.</td></tr>{% endfor %}</tbody>
+      <td class="num"><span class="bal {{ 'neg' if d.balance < 0 else ('low' if d.balance <= low else 'ok') }}">{{ d.balance }}</span></td>
+      {% if full and me.role == 'admin' %}<td class="acts">
+        <form method="post" action="{{ url_for('stock', unit=request.args.get('unit','')) }}" class="inline"
+              onsubmit="const v=prompt('Move {{ d.unit_name }} {{ d.material }} {{ d.thickness }} into which material and thickness? (e.g. MS 18G)\nCutting entries and stock records of this unit will be changed.', '{{ d.material }} {{ d.thickness }}'); if(!v) return false; this.to.value=v; return true;">
+          <input type="hidden" name="csrf" value="{{ csrf_token }}"><input type="hidden" name="action" value="line_move">
+          <input type="hidden" name="unit_id" value="{{ d.unit_id }}"><input type="hidden" name="material" value="{{ d.material }}">
+          <input type="hidden" name="thickness" value="{{ d.thickness }}"><input type="hidden" name="to">
+          <button class="link">✎ move to…</button></form>
+        <form method="post" action="{{ url_for('stock', unit=request.args.get('unit','')) }}" class="inline"
+              onsubmit="return confirm('Delete stock line {{ d.unit_name }} {{ d.material }} {{ d.thickness }}?\nIts received / count records are deleted. Cutting entries are kept.')">
+          <input type="hidden" name="csrf" value="{{ csrf_token }}"><input type="hidden" name="action" value="line_delete">
+          <input type="hidden" name="unit_id" value="{{ d.unit_id }}"><input type="hidden" name="material" value="{{ d.material }}">
+          <input type="hidden" name="thickness" value="{{ d.thickness }}">
+          <button class="link danger">✕ delete</button></form></td>{% endif %}</tr>
+  {% else %}<tr><td colspan="9" class="muted">No stock recorded yet. Add material received on the Stock page.</td></tr>{% endfor %}</tbody>
 </table></div>

@@ -172,6 +172,13 @@ CREATE TABLE IF NOT EXISTS bending (
     entered_at TEXT NOT NULL       -- when it was entered (server time, cannot be changed)
 );
 CREATE INDEX IF NOT EXISTS idx_bending_done ON bending(done_at);
+CREATE TABLE IF NOT EXISTS stock_hidden (
+    unit_id INTEGER NOT NULL,
+    material TEXT NOT NULL,
+    thickness TEXT NOT NULL,
+    hidden_at TEXT NOT NULL,       -- shown again only if new cutting / stock happens after this
+    PRIMARY KEY (unit_id, material, thickness)
+);
 CREATE TABLE IF NOT EXISTS masters_log (
     id INTEGER PRIMARY KEY,
     at TEXT NOT NULL,
@@ -337,7 +344,13 @@ def secs_filter(value):
 def dt_filter(value):
     if not value:
         return "-"
-    d = datetime.strptime(value, TS_FMT)
+    try:
+        d = datetime.strptime(value, TS_FMT)
+    except ValueError:                      # date without time
+        try:
+            return datetime.strptime(value[:10], "%Y-%m-%d").strftime("%d-%m-%Y")
+        except ValueError:
+            return value
     return d.strftime("%d-%m-%Y %I:%M %p")
 
 
@@ -1859,7 +1872,7 @@ def stock_balances(unit_id=None):
 
     def row(key):
         return data.setdefault(key, {"unit_id": key[0], "material": key[1], "thickness": key[2],
-                                     "received": 0, "counted": 0, "used": 0, "used_today": 0})
+                                     "received": 0, "counted": 0, "used": 0, "used_today": 0, "last": ""})
     for r in db.execute("SELECT unit_id, material, thickness, "
                         "SUM(CASE WHEN kind='in' THEN qty ELSE 0 END) AS received, "
                         "SUM(CASE WHEN kind='count' THEN qty ELSE 0 END) AS counted "
@@ -1867,14 +1880,23 @@ def stock_balances(unit_id=None):
         d = row((r["unit_id"], r["material"], r["thickness"]))
         d["received"], d["counted"] = r["received"], r["counted"]
     for r in db.execute("SELECT unit_id, material, thickness, COUNT(*) AS used, "
-                        "SUM(substr(cut_start,1,10)=?) AS used_today "
+                        "SUM(substr(cut_start,1,10)=?) AS used_today, MAX(entered_at) AS last "
                         f"FROM entries {where} GROUP BY unit_id, material, thickness", [today] + params):
         d = row((r["unit_id"], r["material"], r["thickness"]))
-        d["used"], d["used_today"] = r["used"], r["used_today"]
+        d["used"], d["used_today"], d["last"] = r["used"], r["used_today"], r["last"] or ""
     units = {u["id"]: u["name"] for u in db.execute("SELECT * FROM units")}
     mat_order = {m["name"]: i for i, m in enumerate(material_list(active_only=False))}
+    hidden = {(h["unit_id"], h["material"], h["thickness"]): h["hidden_at"]
+              for h in db.execute("SELECT * FROM stock_hidden")}
+    for r in db.execute(f"SELECT unit_id, material, thickness, MAX(entered_at) AS last FROM stock_moves {where} "
+                        "GROUP BY unit_id, material, thickness", params):
+        d = data.get((r["unit_id"], r["material"], r["thickness"]))
+        if d:
+            d["last"] = max(d["last"], r["last"] or "")
     out = []
-    for d in data.values():
+    for key, d in data.items():
+        if key in hidden and d["last"] <= hidden[key]:
+            continue                       # deleted by admin and nothing new since
         d["balance"] = d["received"] + d["counted"] - d["used"]
         d["unit_name"] = units.get(d["unit_id"], "?")
         out.append(d)
@@ -1949,6 +1971,38 @@ def stock():
             db.execute("DELETE FROM stock_moves WHERE id=?", (f.get("id"),))
             db.commit()
             flash("Stock record deleted. Balance recalculated.", "ok")
+        elif action in ("line_delete", "line_move") and is_admin:
+            key = (int(f.get("unit_id") or 0), f.get("material", ""), f.get("thickness", ""))
+            uname = (db.execute("SELECT name FROM units WHERE id=?", (key[0],)).fetchone() or {"name": "?"})["name"]
+            if action == "line_delete":
+                n = db.execute("DELETE FROM stock_moves WHERE unit_id=? AND material=? AND thickness=?", key).rowcount
+                db.execute("INSERT INTO stock_hidden(unit_id, material, thickness, hidden_at) VALUES (?,?,?,?) "
+                           "ON CONFLICT(unit_id, material, thickness) DO UPDATE SET hidden_at=excluded.hidden_at",
+                           key + (now_str(),))
+                db.commit()
+                flash(f"Stock line {uname} {key[1]} {key[2]} deleted ({n} received/count records removed). "
+                      "Cutting entries are kept.", "ok")
+            else:
+                parts = (f.get("to", "") or "").upper().split()
+                new_mat = clean_code(parts[0]) if parts else ""
+                new_thk = clean_code("".join(parts[1:])) if len(parts) > 1 else ""
+                if not new_mat or not new_thk:
+                    flash("Type material and thickness, e.g. MS 18G.", "error")
+                elif not thickness_ok(new_thk):
+                    flash(THICK_HELP, "error")
+                else:
+                    ids = [r[0] for r in db.execute("SELECT id FROM entries WHERE unit_id=? AND material=? AND thickness=?", key)]
+                    db.execute("UPDATE entries SET material=?, thickness=? WHERE unit_id=? AND material=? AND thickness=?",
+                               (new_mat, new_thk) + key)
+                    db.execute("UPDATE stock_moves SET material=?, thickness=? WHERE unit_id=? AND material=? AND thickness=?",
+                               (new_mat, new_thk) + key)
+                    if ids:
+                        recompute_codes(f"e.id IN ({','.join('?' * len(ids))})", ids)
+                    remember("materials", new_mat, me["id"])
+                    remember("thicknesses", new_thk, me["id"])
+                    db.commit()
+                    flash(f"{uname}: {key[1]} {key[2]} moved into {new_mat} {new_thk} "
+                          f"({len(ids)} cutting entries and their sheet codes updated).", "ok")
         return redirect(url_for("stock", unit=request.args.get("unit", "")))
 
     scope = stock_scope(me)
