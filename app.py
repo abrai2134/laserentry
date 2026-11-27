@@ -1174,6 +1174,19 @@ def requests_page():
     if request.method == "POST":
         f = request.form
         action = f.get("action", "add")
+        if action == "delete":
+            r = db.execute("SELECT * FROM laser_requests WHERE id=?", (f.get("id"),)).fetchone()
+            if not r:
+                abort(404)
+            if not (is_admin or (r["user_id"] and r["user_id"] == me["id"])):
+                flash("Only admin or the person who entered this request can delete it.", "error")
+            else:
+                db.execute("DELETE FROM laser_requests WHERE id=?", (r["id"],))
+                log_change(me, f"Request #{r['id']} deleted ({r['party']} - {r['model']} x {r['qty']}, "
+                               f"by {r['made_by']}).")
+                db.commit()
+                flash(f"Request #{r['id']} deleted.", "ok")
+            return redirect(request.referrer or url_for("requests_page"))
         if action in ("done", "cancel", "reopen"):
             r = db.execute("SELECT * FROM laser_requests WHERE id=?", (f.get("id"),)).fetchone()
             if not r:
@@ -1210,6 +1223,55 @@ def requests_page():
         params.append(d1.isoformat())
     rows = request_rows(" AND ".join(where) or "1=1", params)
     return render_template("requests.html", rows=rows, status=status, args=request.args, **lists)
+
+
+def log_change(me, text):
+    get_db().execute("INSERT INTO masters_log(at, user_id, text) VALUES (?,?,?)", (now_str(), me["id"], text))
+
+
+@app.route("/requests/<int:rid>/edit", methods=["GET", "POST"])
+@login_required
+def edit_request(rid):
+    """Correct a wrong request (admin: any; others: the ones they entered)."""
+    me = current_user()
+    db = get_db()
+    r = db.execute("SELECT * FROM laser_requests WHERE id=?", (rid,)).fetchone()
+    if not r:
+        abort(404)
+    if not (me["role"] == "admin" or (r["user_id"] and r["user_id"] == me["id"])):
+        flash("Only admin or the person who entered this request can edit it.", "error")
+        return redirect(url_for("requests_page"))
+    lists = request_lists()
+    if request.method == "POST":
+        f = request.form
+        made_by = " ".join(f.get("made_by", "").split()).upper()
+        party = " ".join(f.get("party", "").split()).upper()
+        machine = next((m for m in lists["models"] if str(m["id"]) == f.get("machine_id")), None)
+        operator = next((o for o in lists["operators"] if str(o["id"]) == f.get("operator_id")), None)
+        try:
+            qty = int(f.get("qty") or "")
+        except ValueError:
+            qty = 0
+        if not (made_by and party and machine and operator and qty >= 1):
+            flash("Fill Request By, Party, Model, Qty (1 or more) and Operator.", "error")
+        else:
+            new = {"made_by": made_by, "party": party, "model": machine["name"], "qty": qty,
+                   "operator": operator["full_name"], "remarks": f.get("remarks", "").strip()[:300]}
+            old_op = db.execute("SELECT full_name FROM users WHERE id=?", (r["operator_id"],)).fetchone()
+            old = {"made_by": r["made_by"], "party": r["party"], "model": r["model"], "qty": r["qty"],
+                   "operator": old_op["full_name"] if old_op else "", "remarks": r["remarks"] or ""}
+            changes = [f"{k} {old[k]} -> {new[k]}" for k in new if str(old[k]) != str(new[k])]
+            if changes:
+                db.execute("UPDATE laser_requests SET made_by=?, party=?, machine_id=?, model=?, qty=?, operator_id=?, "
+                           "remarks=? WHERE id=?", (made_by, party, machine["id"], machine["name"], qty, operator["id"],
+                                                    new["remarks"], rid))
+                log_change(me, f"Request #{rid} edited: " + "; ".join(changes) + ".")
+                db.commit()
+                flash(f"Request #{rid} updated: " + "; ".join(changes) + ". Its place in the queue is unchanged.", "ok")
+            else:
+                flash("No change.", "ok")
+            return redirect(url_for("requests_page"))
+    return render_template("request_edit.html", rq=r, **lists)
 
 
 @app.route("/requests.csv")

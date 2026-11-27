@@ -1,0 +1,12 @@
+{% extends 'base.html' %}
+{% block body %}
+<form class="card narrowish" method="post"><input type="hidden" name="csrf" value="{{ csrf_token }}">
+  <h1>Edit request #{{ rq.id }}</h1>
+  <p class="muted small">Requested {{ rq.created_at|dt }} - the time stays the same, so its place in the queue does not change.</p>
+  {% include '_request_form.html' with context %}
+  <div class="row">
+    <button class="btn big start">SAVE CHANGES</button>
+    <a class="btn big alt" href="{{ url_for('requests_page') }}">Back</a>
+  </div>
+</form>
+{% endblock %}

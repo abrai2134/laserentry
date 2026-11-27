@@ -1,22 +1,22 @@
-{# needs: made_by, models, operators; optional last_by #}
+{# needs: made_by, models, operators; optional last_by, rq (request being edited) #}
 <div class="grid2 tight">
   <label>Request By
-    <input name="made_by" list="madeby" required autocomplete="off" autocapitalize="characters" value="{{ last_by or '' }}" placeholder="Pick your name"></label>
+    <input name="made_by" list="madeby" required autocomplete="off" autocapitalize="characters" value="{{ rq.made_by if rq else (last_by or '') }}" placeholder="Pick your name"></label>
   <label>Party
-    <input name="party" id="partyBox" list="parties" required autocomplete="off" autocapitalize="characters" placeholder="Type 2+ letters of party name"></label>
+    <input name="party" id="partyBox" list="parties" required autocomplete="off" autocapitalize="characters" placeholder="Type 2+ letters of party name" value="{{ rq.party if rq else '' }}"></label>
 </div>
 <datalist id="madeby">{% for n in made_by %}<option value="{{ n }}">{% endfor %}</datalist>
 <datalist id="parties"></datalist>
 <div class="grid2 tight">
   <label>Model
     <select name="machine_id" required class="lotsel"><option value="">-- select model --</option>
-      {% for m in models %}<option value="{{ m.id }}" data-lot="{{ m.lot_size or '' }}">{{ m.name }}{% if m.lot_size %} (lot {{ m.lot_size }}){% endif %}</option>{% endfor %}</select></label>
-  <label>Qty <input name="qty" type="number" min="1" inputmode="numeric" required class="lotqty"></label>
+      {% for m in models %}<option value="{{ m.id }}" data-lot="{{ m.lot_size or '' }}" {{ 'selected' if rq and rq.machine_id == m.id }}>{{ m.name }}{% if m.lot_size %} (lot {{ m.lot_size }}){% endif %} · {{ m.unit_name }}</option>{% endfor %}</select></label>
+  <label>Qty <input name="qty" type="number" min="1" inputmode="numeric" required class="lotqty" value="{{ rq.qty if rq else '' }}"></label>
 </div>
 <label>Name of operator
   <select name="operator_id" required><option value="">-- select operator --</option>
-    {% for o in operators %}<option value="{{ o.id }}">{{ o.full_name }}{% if o.unit_name %} ({{ o.unit_name }}){% endif %}</option>{% endfor %}</select></label>
-<label>Remarks (optional) <input name="remarks" maxlength="300"></label>
+    {% for o in operators %}<option value="{{ o.id }}" {{ 'selected' if rq and rq.operator_id == o.id }}>{{ o.full_name }}{% if o.unit_name %} ({{ o.unit_name }}){% endif %}</option>{% endfor %}</select></label>
+<label>Remarks (optional) <input name="remarks" maxlength="300" value="{{ rq.remarks if rq and rq.remarks else '' }}"></label>
 <script>
   (function () {
     const box = document.getElementById('partyBox'), list = document.getElementById('parties');
