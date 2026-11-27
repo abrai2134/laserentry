@@ -40,11 +40,16 @@
       {% if admin or not me.unit_id %}
         <select name="unit_id" required>{% for u in units %}<option value="{{ u.id }}">{{ u.name }}</option>{% endfor %}</select>
       {% endif %}
-      <input name="name" placeholder="e.g. LASER3" required autocapitalize="characters"><button class="btn">Add machine</button></form>
+      <input name="name" placeholder="e.g. LASER3" required autocapitalize="characters">
+      <input name="lot_size" type="number" min="0" inputmode="numeric" placeholder="Lot size" class="lotin">
+      <button class="btn">Add machine</button></form>
     {% if not admin and me.unit_id %}<p class="muted small">Will be added to {{ me.unit_name }}.</p>{% endif %}
-    <div class="scrollbox"><ul>{% for m in machines %}<li>{% if admin or not me.unit_id %}{{ m.unit_name }} / {% endif %}<b>{{ m.name }}</b> {{ toggle('machine', m, 'machines') }}</li>
+    <div class="scrollbox"><ul>{% for m in machines %}<li>{% if admin or not me.unit_id %}{{ m.unit_name }} / {% endif %}<b>{{ m.name }}</b>
+      <form method="post" class="inline lotform">{{ csrf() }}<input type="hidden" name="action" value="set_lot"><input type="hidden" name="id" value="{{ m.id }}"><input type="hidden" name="anchor" value="machines">
+        <span class="muted small">lot</span> <input name="lot_size" type="number" min="0" inputmode="numeric" value="{{ m.lot_size or '' }}" placeholder="-" onchange="this.form.submit()"></form>
+      {{ toggle('machine', m, 'machines') }}</li>
     {% else %}<li class="muted">No machines yet.</li>{% endfor %}</ul></div>
-    <p class="muted small">Machine name goes inside the sheet code, so keep it short (no spaces).</p>
+    <p class="muted small">Machine name goes inside the sheet code, so keep it short (no spaces). Lot size: type the number and press Enter (or click outside) to save; it pre-fills Qty on the bending and request forms.</p>
   </div>
 
   <div class="card" id="materials">

@@ -101,3 +101,5 @@ tr.justsaved td { background:#dcfce7; }
 .boardwrap { max-width:1100px; margin:0 auto; }
 .board h3 { margin:14px 0 8px; font-size:16px; }
 .narrow .btn.alt { margin-top:10px; }
+.lotform input { width:64px; padding:3px 6px; margin:0 4px; font-size:13px; }
+.row input.lotin { flex:0 1 100px; }

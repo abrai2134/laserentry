@@ -54,6 +54,17 @@
       if (b.classList.contains('big')) b.textContent = 'Saving... please wait';
     });
   });
+  // machine lot size pre-fills Qty (only if Qty is empty or still the previous lot size)
+  document.querySelectorAll('form').forEach(function (f) {
+    const sel = f.querySelector('select.lotsel'), qty = f.querySelector('input.lotqty');
+    if (!sel || !qty) return;
+    let auto = '';
+    function fill() {
+      const o = sel.options[sel.selectedIndex], lot = o ? (o.dataset.lot || '') : '';
+      if (lot && (qty.value === '' || qty.value === auto)) { qty.value = lot; auto = lot; }
+    }
+    sel.addEventListener('change', fill); fill();
+  });
   // coming back with the browser Back button: unlock the form again
   window.addEventListener('pageshow', function () {
     document.querySelectorAll('form[data-sent]').forEach(function (f) {

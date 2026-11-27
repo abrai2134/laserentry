@@ -9,9 +9,9 @@
 <datalist id="parties"></datalist>
 <div class="grid2 tight">
   <label>Model
-    <select name="machine_id" required><option value="">-- select model --</option>
-      {% for m in models %}<option value="{{ m.id }}">{{ m.name }}</option>{% endfor %}</select></label>
-  <label>Qty <input name="qty" type="number" min="1" inputmode="numeric" required></label>
+    <select name="machine_id" required class="lotsel"><option value="">-- select model --</option>
+      {% for m in models %}<option value="{{ m.id }}" data-lot="{{ m.lot_size or '' }}">{{ m.name }}{% if m.lot_size %} (lot {{ m.lot_size }}){% endif %}</option>{% endfor %}</select></label>
+  <label>Qty <input name="qty" type="number" min="1" inputmode="numeric" required class="lotqty"></label>
 </div>
 <label>Name of operator
   <select name="operator_id" required><option value="">-- select operator --</option>

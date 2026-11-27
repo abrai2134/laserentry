@@ -16,9 +16,9 @@
   <p class="muted small">When bending is finished, press <b>✔ OUT</b> on that line below. The OUT time is recorded and the bending time is calculated.</p>
   {% if machines %}
   <label>Machine
-    <select name="machine_id" required>
+    <select name="machine_id" required class="lotsel">
       {% if machines|length > 1 %}<option value="">-- select --</option>{% endif %}
-      {% for m in machines %}<option value="{{ m.id }}" {{ 'selected' if last_machine == m.id }}>{% if admin or not me.unit_id %}{{ m.unit_name }} / {% endif %}{{ m.name }}</option>{% endfor %}
+      {% for m in machines %}<option value="{{ m.id }}" data-lot="{{ m.lot_size or '' }}" {{ 'selected' if last_machine == m.id }}>{% if admin or not me.unit_id %}{{ m.unit_name }} / {% endif %}{{ m.name }}</option>{% endfor %}
     </select>
   </label>
   {% else %}<div class="flash error">No machine set up for your unit. Add it on the <a href="{{ url_for('masters') }}">Masters</a> page.</div>{% endif %}
@@ -36,7 +36,7 @@
     </label>
   </div>
   <div class="grid2 tight">
-    <label>Quantity (pcs) <input name="qty" type="number" min="1" inputmode="numeric" required></label>
+    <label>Quantity (pcs) <input name="qty" type="number" min="1" inputmode="numeric" required class="lotqty"></label>
     <label>Date / time <input type="datetime-local" name="done_at" value="{{ now_local }}" max="{{ now_local }}"></label>
   </div>
   <label>Remarks (optional) <input name="remarks"></label>

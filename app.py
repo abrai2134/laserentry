@@ -257,6 +257,9 @@ def init_db():
     # older databases: bending had no machine
     if "machine_id" not in [r[1] for r in db.execute("PRAGMA table_info(bending)")]:
         db.execute("ALTER TABLE bending ADD COLUMN machine_id INTEGER REFERENCES machines(id)")
+    # machines: standard lot size (pieces), pre-fills qty on the bending and request forms
+    if "lot_size" not in [r[1] for r in db.execute("PRAGMA table_info(machines)")]:
+        db.execute("ALTER TABLE machines ADD COLUMN lot_size INTEGER")
     # older databases: machines did not record who added them
     if "added_by" not in [r[1] for r in db.execute("PRAGMA table_info(machines)")]:
         db.execute("ALTER TABLE machines ADD COLUMN added_by INTEGER REFERENCES users(id)")
@@ -820,7 +823,25 @@ def masters():
             if cat == "ok" and log:
                 db.execute("INSERT INTO masters_log(at, user_id, text) VALUES (?,?,?)", (now_str(), me["id"], msg))
 
-        if action == "add_machine":
+        def lot_value():
+            try:
+                v = int(f.get("lot_size") or 0)
+            except ValueError:
+                v = -1
+            return v
+
+        if action == "set_lot":
+            row = db.execute("SELECT m.*, u.name AS unit_name FROM machines m JOIN units u ON u.id=m.unit_id "
+                             "WHERE m.id=?", (f.get("id"),)).fetchone()
+            lot = lot_value()
+            if not row or (not is_admin and me["unit_id"] and row["unit_id"] != me["unit_id"]):
+                flash("You cannot change this machine.", "error")
+            elif lot < 0:
+                flash("Lot size must be a whole number (0 or empty = no lot size).", "error")
+            elif (row["lot_size"] or 0) != lot:
+                db.execute("UPDATE machines SET lot_size=? WHERE id=?", (lot or None, row["id"]))
+                done(f"Lot size of {row['name']} ({row['unit_name']}) set to {lot or 'none'}.")
+        elif action == "add_machine":
             name = clean_code(f.get("name"))
             unit_id = f.get("unit_id") if (is_admin or not me["unit_id"]) else me["unit_id"]
             unit = db.execute("SELECT * FROM units WHERE id=?", (unit_id,)).fetchone() if unit_id else None
@@ -832,8 +853,10 @@ def masters():
                     db.execute("UPDATE machines SET active=1 WHERE id=?", (row["id"],))
                     done(f"{name} is already in {unit['name']}.", log=bool(not row["active"]))
                 else:
-                    db.execute("INSERT INTO machines(name, unit_id, added_by) VALUES (?,?,?)", (name, unit["id"], me["id"]))
-                    done(f"Machine {name} added to {unit['name']}.")
+                    lot = max(lot_value(), 0)
+                    db.execute("INSERT INTO machines(name, unit_id, added_by, lot_size) VALUES (?,?,?,?)",
+                               (name, unit["id"], me["id"], lot or None))
+                    done(f"Machine {name} added to {unit['name']}" + (f" with lot size {lot}." if lot else "."))
         elif action == "add_loader":
             name = MASTER_KINDS["loader"][3](f.get("name"))
             unit_id = f.get("unit_id") if (is_admin or not me["unit_id"]) else me["unit_id"]
