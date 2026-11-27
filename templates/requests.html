@@ -1,0 +1,46 @@
+{% extends 'base.html' %}
+{% block body %}
+{% macro csrf() %}<input type="hidden" name="csrf" value="{{ csrf_token }}">{% endmacro %}
+<h1>Laser cutting requests</h1>
+
+<form class="card" method="post">{{ csrf() }}
+  <h2>✚ New request</h2>
+  <p class="muted small">Date and time are recorded automatically when you save, so the first request is first in the queue.</p>
+  {% if sheet.error %}<div class="flash error small">{{ sheet.error }}{% if sheet.at %} Using names saved on {{ sheet.at|dt }}.{% endif %}</div>{% endif %}
+  <div class="grid2 tight">
+    <label>Made by
+      <input name="made_by" list="madeby" required autocomplete="off" autocapitalize="characters" placeholder="Pick from list"></label>
+    <label>Party
+      <input name="party" list="parties" required autocomplete="off" autocapitalize="characters" placeholder="Type to search party"></label>
+  </div>
+  <datalist id="madeby">{% for n in made_by %}<option value="{{ n }}">{% endfor %}</datalist>
+  <datalist id="parties">{% for n in parties %}<option value="{{ n }}">{% endfor %}</datalist>
+  <div class="grid2 tight">
+    <label>Model
+      <select name="machine_id" required><option value="">-- select model --</option>
+        {% for m in models %}<option value="{{ m.id }}">{{ m.name }}</option>{% endfor %}</select></label>
+    <label>Qty <input name="qty" type="number" min="1" inputmode="numeric" required></label>
+  </div>
+  <label>Name of operator
+    <select name="operator_id" required><option value="">-- select operator --</option>
+      {% for o in operators %}<option value="{{ o.id }}">{{ o.full_name }}{% if o.unit_name %} ({{ o.unit_name }}){% endif %}</option>{% endfor %}</select></label>
+  <label>Remarks (optional) <input name="remarks"></label>
+  <button class="btn big start">SAVE REQUEST</button>
+</form>
+
+<div class="tabs">
+  {% for st, t in [('pending','⏳ Pending'),('done','✔ Done'),('cancelled','✕ Cancelled'),('all','All')] %}
+    <a class="{{ 'on' if status == st }}" href="{{ url_for('requests_page', status=st, operator=args.get('operator',''), party=args.get('party','')) }}">{{ t }}</a>
+  {% endfor %}
+</div>
+<form class="filters" method="get">
+  <input type="hidden" name="status" value="{{ status }}">
+  <label>Operator <select name="operator" onchange="this.form.submit()"><option value="">All</option>{% for o in operators %}<option value="{{ o.id }}" {{ 'selected' if args.get('operator') == o.id|string }}>{{ o.full_name }}</option>{% endfor %}</select></label>
+  <label>Party <input name="party" list="parties" value="{{ args.get('party','') }}" onchange="this.form.submit()"></label>
+  {% if status != 'pending' %}<label>From <input type="date" name="from" value="{{ args.get('from','') }}" onchange="this.form.submit()"></label>{% endif %}
+  <a class="btn alt" href="{{ url_for('requests_csv') }}">Download Excel (CSV)</a>
+</form>
+
+<h2>{{ rows|length }} requests</h2>
+{% include '_requests_table.html' with context %}
+{% endblock %}

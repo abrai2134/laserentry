@@ -121,6 +121,25 @@ CREATE TABLE IF NOT EXISTS bend_models (
     added_by INTEGER REFERENCES users(id),
     added_at TEXT
 );
+CREATE TABLE IF NOT EXISTS settings (
+    key TEXT PRIMARY KEY,
+    value TEXT
+);
+CREATE TABLE IF NOT EXISTS laser_requests (
+    id INTEGER PRIMARY KEY,
+    created_at TEXT NOT NULL,          -- server time: shows who asked first
+    user_id INTEGER NOT NULL REFERENCES users(id),   -- who typed the request
+    made_by TEXT NOT NULL,
+    party TEXT NOT NULL,
+    machine_id INTEGER REFERENCES machines(id),
+    model TEXT NOT NULL,
+    qty INTEGER NOT NULL,
+    operator_id INTEGER REFERENCES users(id),
+    remarks TEXT,
+    status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending', 'done', 'cancelled')),
+    closed_at TEXT,
+    closed_by INTEGER REFERENCES users(id)
+);
 CREATE TABLE IF NOT EXISTS loaders (
     id INTEGER PRIMARY KEY,
     name TEXT NOT NULL,
@@ -446,7 +465,9 @@ def home():
     today_count = db.execute(
         "SELECT COUNT(*), COALESCE(SUM(qty),0) FROM entries WHERE user_id=? AND substr(cut_start,1,10)=?",
         (me["id"], today)).fetchone()
+    my_requests = request_rows("r.status='pending' AND r.operator_id=?", (me["id"],))
     return render_template("home.html", running=running, recent=recent, today_count=today_count,
+                           my_requests=my_requests,
                            waiting=bending_waiting(me), units=db.execute("SELECT * FROM units ORDER BY name").fetchall(),
                            stock_rows=stock_balances(stock_scope(me)), low=LOW_STOCK)
 
@@ -864,6 +885,199 @@ def masters():
                            log=db.execute("SELECT l.*, u.full_name FROM masters_log l LEFT JOIN users u "
                                           "ON u.id=l.user_id ORDER BY l.id DESC LIMIT 50").fetchall()
                            if is_admin else [])
+
+
+# ---------------------------------------------------------------- settings + Google Sheet lists
+def get_setting(key, default=""):
+    r = get_db().execute("SELECT value FROM settings WHERE key=?", (key,)).fetchone()
+    return r["value"] if r and r["value"] is not None else default
+
+
+def set_setting(key, value):
+    get_db().execute("INSERT INTO settings(key, value) VALUES (?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+                     (key, value))
+
+
+_sheet_cache = {"at": None, "data": None}
+SHEET_CACHE_MIN = 10
+
+
+def sheet_csv_url(link):
+    """Turn a normal Google Sheet link into its CSV download link (keeps the tab if the link has gid=)."""
+    m = re.search(r"/spreadsheets/d/([A-Za-z0-9_-]+)", link or "")
+    if not m:
+        return None
+    g = re.search(r"[#&?]gid=(\d+)", link)
+    return (f"https://docs.google.com/spreadsheets/d/{m.group(1)}/export?format=csv"
+            + (f"&gid={g.group(1)}" if g else ""))
+
+
+def fetch_sheet_lists(force=False):
+    """Made-by and party names from the Google Sheet set in Setup. Cached 10 minutes; the last good copy
+    is kept in the database so the form still works if Google cannot be reached."""
+    import json
+    import urllib.request
+    now_ = now()
+    if not force and _sheet_cache["data"] and now_ - _sheet_cache["at"] < timedelta(minutes=SHEET_CACHE_MIN):
+        return _sheet_cache["data"]
+    url = sheet_csv_url(get_setting("sheet_url"))
+    made_col = get_setting("sheet_madeby_col", "Made By").strip().lower()
+    party_col = get_setting("sheet_party_col", "PARTY").strip().lower()
+    data = {"made_by": [], "party": [], "error": None, "at": None}
+    if not url:
+        data["error"] = "Google Sheet link is not set (admin: Setup page)."
+    else:
+        try:
+            req = urllib.request.Request(url, headers={"User-Agent": "laserentry"})
+            with urllib.request.urlopen(req, timeout=20) as resp:
+                text = resp.read().decode("utf-8-sig", errors="replace")
+            if text.lstrip().startswith("<"):
+                raise ValueError("Google sent a login page: share the sheet as 'Anyone with the link: Viewer'.")
+            rows = csv.reader(io.StringIO(text))
+            header = [h.strip().lower() for h in next(rows, [])]
+            if made_col not in header or party_col not in header:
+                raise ValueError(f"Columns not found. Sheet has: {', '.join(h for h in header[:25] if h)}")
+            mi, pi = header.index(made_col), header.index(party_col)
+            made, party = set(), set()
+            for r in rows:
+                if len(r) > mi and r[mi].strip():
+                    made.add(" ".join(r[mi].split()).upper())
+                if len(r) > pi and r[pi].strip():
+                    party.add(" ".join(r[pi].split()).upper())
+            data.update(made_by=sorted(made), party=sorted(party), at=now_str())
+            set_setting("sheet_cache", json.dumps({"made_by": data["made_by"], "party": data["party"], "at": data["at"]}))
+            get_db().commit()
+        except Exception as ex:                     # network / sharing / column problems
+            data["error"] = f"Could not read the Google Sheet: {ex}"
+            try:
+                old = json.loads(get_setting("sheet_cache") or "{}")
+                data.update(made_by=old.get("made_by", []), party=old.get("party", []), at=old.get("at"))
+            except ValueError:
+                pass
+    _sheet_cache.update(at=now_, data=data)
+    return data
+
+
+# ---------------------------------------------------------------- laser cutting requests
+def request_lists():
+    db = get_db()
+    sheet = fetch_sheet_lists()
+    used_made = [r[0] for r in db.execute("SELECT DISTINCT made_by FROM laser_requests")]
+    used_party = [r[0] for r in db.execute("SELECT DISTINCT party FROM laser_requests")]
+    return dict(
+        sheet=sheet,
+        made_by=sorted(set(sheet["made_by"]) | set(used_made)),
+        parties=sorted(set(sheet["party"]) | set(used_party)),
+        models=db.execute("SELECT m.*, u.name AS unit_name FROM machines m JOIN units u ON u.id=m.unit_id "
+                          "WHERE m.active=1 ORDER BY m.name").fetchall(),
+        operators=db.execute("SELECT us.*, un.name AS unit_name FROM users us LEFT JOIN units un ON un.id=us.unit_id "
+                             "WHERE us.active=1 AND us.role='operator' ORDER BY us.full_name").fetchall())
+
+
+def request_rows(where="1=1", params=()):
+    return get_db().execute(
+        "SELECT r.*, us.full_name AS requested_by, op.full_name AS operator_name, un.name AS unit_name, "
+        "cl.full_name AS closed_by_name FROM laser_requests r JOIN users us ON us.id=r.user_id "
+        "LEFT JOIN users op ON op.id=r.operator_id LEFT JOIN units un ON un.id=op.unit_id "
+        f"LEFT JOIN users cl ON cl.id=r.closed_by WHERE {where} ORDER BY r.created_at, r.id", params).fetchall()
+
+
+@app.route("/requests", methods=["GET", "POST"])
+@login_required
+def requests_page():
+    me = current_user()
+    is_admin = me["role"] == "admin"
+    db = get_db()
+    lists = request_lists()
+    if request.method == "POST":
+        f = request.form
+        action = f.get("action", "add")
+        if action in ("done", "cancel", "reopen"):
+            r = db.execute("SELECT * FROM laser_requests WHERE id=?", (f.get("id"),)).fetchone()
+            if not r:
+                abort(404)
+            if not (is_admin or r["operator_id"] == me["id"] or r["user_id"] == me["id"]):
+                flash("Only the operator, the person who asked, or admin can change this request.", "error")
+            else:
+                st = {"done": "done", "cancel": "cancelled", "reopen": "pending"}[action]
+                db.execute("UPDATE laser_requests SET status=?, closed_at=?, closed_by=? WHERE id=?",
+                           (st, None if st == "pending" else now_str(), None if st == "pending" else me["id"], r["id"]))
+                db.commit()
+                flash(f"Request #{r['id']} ({r['party']} - {r['model']} x {r['qty']}) marked {st}.", "ok")
+            return redirect(request.referrer or url_for("requests_page"))
+        made_by = " ".join(f.get("made_by", "").split()).upper()
+        party = " ".join(f.get("party", "").split()).upper()
+        machine = next((m for m in lists["models"] if str(m["id"]) == f.get("machine_id")), None)
+        operator = next((o for o in lists["operators"] if str(o["id"]) == f.get("operator_id")), None)
+        try:
+            qty = int(f.get("qty") or "")
+        except ValueError:
+            qty = 0
+        if not made_by:
+            flash("Select Made by.", "error")
+        elif not party:
+            flash("Select the party.", "error")
+        elif not machine:
+            flash("Select the model.", "error")
+        elif qty < 1:
+            flash("Enter quantity (1 or more).", "error")
+        elif not operator:
+            flash("Select the operator.", "error")
+        else:
+            db.execute("BEGIN IMMEDIATE")
+            if db.execute("SELECT 1 FROM laser_requests WHERE user_id=? AND party=? AND machine_id=? AND qty=? "
+                          "AND operator_id=? AND (julianday(?)-julianday(created_at))*86400 < 20",
+                          (me["id"], party, machine["id"], qty, operator["id"], now_str())).fetchone():
+                db.rollback()
+                flash("This request was just saved. Not saved again.", "error")
+            else:
+                cur = db.execute("INSERT INTO laser_requests(created_at, user_id, made_by, party, machine_id, model, qty, "
+                                 "operator_id, remarks) VALUES (?,?,?,?,?,?,?,?,?)",
+                                 (now_str(), me["id"], made_by, party, machine["id"], machine["name"], qty,
+                                  operator["id"], f.get("remarks", "").strip()))
+                db.commit()
+                pos = db.execute("SELECT COUNT(*) FROM laser_requests WHERE status='pending' AND operator_id=? "
+                                 "AND (created_at < (SELECT created_at FROM laser_requests WHERE id=?) OR id<=?)",
+                                 (operator["id"], cur.lastrowid, cur.lastrowid)).fetchone()[0]
+                flash(f"Request #{cur.lastrowid} saved: {party} - {machine['name']} x {qty} for "
+                      f"{operator['full_name']}. Position in his queue: {pos}.", "ok")
+        return redirect(url_for("requests_page"))
+
+    status = request.args.get("status", "pending")
+    where, params = [], []
+    if status in ("pending", "done", "cancelled"):
+        where.append("r.status=?")
+        params.append(status)
+    if request.args.get("operator"):
+        where.append("r.operator_id=?")
+        params.append(request.args["operator"])
+    if request.args.get("party"):
+        where.append("r.party=?")
+        params.append(request.args["party"])
+    if status != "pending":
+        try:
+            d1 = datetime.strptime(request.args.get("from", ""), "%Y-%m-%d").date()
+        except ValueError:
+            d1 = now().date() - timedelta(days=30)
+        where.append("substr(r.created_at,1,10) >= ?")
+        params.append(d1.isoformat())
+    rows = request_rows(" AND ".join(where) or "1=1", params)
+    return render_template("requests.html", rows=rows, status=status, args=request.args, **lists)
+
+
+@app.route("/requests.csv")
+@login_required
+def requests_csv():
+    out = io.StringIO()
+    w = csv.writer(out)
+    w.writerow(["Request no", "Date / time", "Made by", "Party", "Model", "Qty", "Operator", "Unit", "Status",
+                "Closed at", "Closed by", "Entered by", "Remarks"])
+    for r in request_rows():
+        w.writerow([r["id"], r["created_at"], r["made_by"], r["party"], r["model"], r["qty"], r["operator_name"] or "",
+                    r["unit_name"] or "", r["status"], r["closed_at"] or "", r["closed_by_name"] or "",
+                    r["requested_by"], r["remarks"] or ""])
+    return Response("\ufeff" + out.getvalue(), mimetype="text/csv",
+                    headers={"Content-Disposition": f"attachment; filename=laser_requests_{now().strftime('%Y%m%d_%H%M')}.csv"})
 
 
 # ---------------------------------------------------------------- loaders
@@ -1762,6 +1976,20 @@ def admin():
                     flash("You cannot disable yourself.", "error")
                 else:
                     db.execute("UPDATE users SET active=1-active WHERE id=?", (f["id"],))
+            elif action == "sheet_settings":
+                link = f.get("sheet_url", "").strip()
+                if link and not sheet_csv_url(link):
+                    flash("That does not look like a Google Sheet link.", "error")
+                else:
+                    set_setting("sheet_url", link)
+                    set_setting("sheet_madeby_col", f.get("madeby_col", "").strip() or "Made By")
+                    set_setting("sheet_party_col", f.get("party_col", "").strip() or "PARTY")
+                    db.commit()
+                    d = fetch_sheet_lists(force=True)
+                    if d["error"]:
+                        flash(d["error"], "error")
+                    else:
+                        flash(f"Google Sheet read: {len(d['made_by'])} 'Made by' names and {len(d['party'])} parties.", "ok")
             elif action == "set_user_unit":
                 db.execute("UPDATE users SET unit_id=? WHERE id=?", (f.get("unit_id") or None, f["id"]))
                 flash("Unit updated.", "ok")
@@ -1774,7 +2002,9 @@ def admin():
                           "ORDER BY u.name, m.name").fetchall()
     users = db.execute("SELECT us.*, un.name AS unit_name FROM users us LEFT JOIN units un "
                        "ON un.id=us.unit_id ORDER BY us.role, us.full_name").fetchall()
-    return render_template("admin.html", units=units, machines=machines, users=users)
+    return render_template("admin.html", units=units, machines=machines, users=users,
+                           sheet_url=get_setting("sheet_url"), madeby_col=get_setting("sheet_madeby_col", "Made By"),
+                           party_col=get_setting("sheet_party_col", "PARTY"))
 
 
 # ---------------------------------------------------------------- backup / restore

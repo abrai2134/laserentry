@@ -28,6 +28,11 @@
 {% endfor %}
 {% endif %}
 
+{% if my_requests %}
+<h2>📋 Cutting requests for you ({{ my_requests|length }}) - first come first</h2>
+{% set rows = my_requests %}{% include '_requests_table.html' with context %}
+{% endif %}
+
 {% if waiting %}
 <h2>⏳ In bending now ({{ waiting|length }})</h2>
 {% include '_bend_waiting.html' with context %}

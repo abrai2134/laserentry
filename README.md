@@ -47,6 +47,16 @@ qty and cutting time, plus a day-wise table for the week or month.
 Filter by unit, machine or material and download it as Excel (CSV).
 Only finished sheets are counted. Operators see their own summary only.
 
+## Laser cutting requests
+
+Menu **Requests**: Made by, Party, Model, Qty, Name of operator (+ remarks). Date and time are
+recorded automatically, so requests are listed first-come-first. **Made by** and **Party**
+come from a Google Sheet: admin pastes its link in **Setup** (sheet shared as "Anyone with the
+link - Viewer"; column headings "Made By" and "PARTY" by default; read every 10 minutes; the
+last good copy is used if Google cannot be reached). **Model** = machine list, **operator** =
+operator logins. Each operator sees their pending requests on their home page and presses
+**Done**. Pending / Done / Cancelled tabs, filters and Excel download.
+
 ## Loaders
 
 Add loaders per unit on the **Masters** page. When an operator presses **FINISH**, the system

@@ -40,6 +40,18 @@
   </table></div>
 </div>
 
+<form class="card" method="post">{{ csrf() }}<input type="hidden" name="action" value="sheet_settings">
+  <h2>Google Sheet for requests (Made by / Party)</h2>
+  <p class="muted small">Paste the link of the sheet that has the <b>Made By</b> and <b>PARTY</b> columns. The sheet must be shared as
+    <b>Anyone with the link - Viewer</b>. Names are read again every 10 minutes. The link is kept only in this app's database.</p>
+  <label>Google Sheet link <input name="sheet_url" value="{{ sheet_url }}" placeholder="https://docs.google.com/spreadsheets/d/..."></label>
+  <div class="grid2 tight">
+    <label>"Made by" column heading <input name="madeby_col" value="{{ madeby_col }}"></label>
+    <label>"Party" column heading <input name="party_col" value="{{ party_col }}"></label>
+  </div>
+  <button class="btn">Save &amp; test</button>
+</form>
+
 <div class="card">
   <h2>Backup / Restore</h2>
   <p>All data (units, machines, logins, entries) is in one file. Download a backup every week and keep it safe.</p>
