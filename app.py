@@ -935,8 +935,10 @@ def fetch_sheet_lists(force=False):
     if not force and _sheet_cache["data"] and now_ - _sheet_cache["at"] < timedelta(minutes=SHEET_CACHE_MIN):
         return _sheet_cache["data"]
     url = sheet_csv_url(get_setting("sheet_url"))
-    made_col = get_setting("sheet_madeby_col", "Made By").strip().lower()
-    party_col = get_setting("sheet_party_col", "PARTY").strip().lower()
+    def key(h):          # compare headings ignoring case, spaces (incl. hidden ones) and symbols
+        return re.sub(r"[^a-z0-9]", "", (h or "").lower())
+    made_col = key(get_setting("sheet_madeby_col", "Made By"))
+    party_col = key(get_setting("sheet_party_col", "PARTY"))
     data = {"made_by": [], "party": [], "error": None, "at": None}
     if not url:
         data["error"] = "Google Sheet link is not set (admin: Setup page)."
@@ -948,9 +950,11 @@ def fetch_sheet_lists(force=False):
             if text.lstrip().startswith("<"):
                 raise ValueError("Google sent a login page: share the sheet as 'Anyone with the link: Viewer'.")
             rows = csv.reader(io.StringIO(text))
-            header = [h.strip().lower() for h in next(rows, [])]
+            raw_header = next(rows, [])
+            header = [key(h) for h in raw_header]
             if made_col not in header or party_col not in header:
-                raise ValueError(f"Columns not found. Sheet has: {', '.join(h for h in header[:25] if h)}")
+                raise ValueError("Columns not found. Sheet has: "
+                                 + ", ".join(" ".join(h.split()) for h in raw_header[:25] if h.strip()))
             mi, pi = header.index(made_col), header.index(party_col)
             made, party = set(), set()
             for r in rows:
