@@ -61,7 +61,7 @@
     let auto = '';
     function fill() {
       const o = sel.options[sel.selectedIndex], lot = o ? (o.dataset.lot || '') : '';
-      if (lot && (qty.value === '' || qty.value === auto)) { qty.value = lot; auto = lot; }
+      if (lot && (qty.value === '' || qty.value === auto || qty.value === (qty.dataset.default || '-'))) { qty.value = lot; auto = lot; }
     }
     sel.addEventListener('change', fill); fill();
   });

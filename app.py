@@ -645,8 +645,12 @@ def new_entry():
                     db.execute("UPDATE machines SET active=1 WHERE id=?", (existing["id"],))
                     machine = existing
                 else:
-                    cur = db.execute("INSERT INTO machines(name, unit_id, added_by) VALUES (?,?,?)",
-                                     (new_machine, unit["id"], me["id"]))
+                    try:
+                        new_lot = max(int(f.get("new_machine_lot") or 0), 0)
+                    except ValueError:
+                        new_lot = 0
+                    cur = db.execute("INSERT INTO machines(name, unit_id, added_by, lot_size) VALUES (?,?,?,?)",
+                                     (new_machine, unit["id"], me["id"], new_lot or None))
                     machine = db.execute("SELECT * FROM machines WHERE id=?", (cur.lastrowid,)).fetchone()
                     added.append(f"machine {new_machine}")
             if remember("materials", material, me["id"]):
