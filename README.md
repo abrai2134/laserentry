@@ -57,7 +57,9 @@ admin pastes its link in **Setup** (sheet shared as "Anyone with the link - View
 10 minutes; last good copy used if Google cannot be reached). Party names are only suggested
 after typing 2+ letters (the full list is never sent). Admin can set a **request PIN** for the
 public page; max 30 requests per hour per device. Operators see their pending requests on their
-home page and press **Done**.
+home page and press **Done**. The login page and the request page show a status list for
+everyone: all pending requests (first come first) and those completed in the last 3 days
+(hidden until the PIN is entered, if a PIN is set).
 
 ## Loaders
 

@@ -8,5 +8,7 @@
   <label>Username <input name="username" autocapitalize="none" autocomplete="username" required autofocus></label>
   <label>Password <input name="password" type="password" autocomplete="current-password" required></label>
   <button class="btn big">Login</button>
+  <a class="btn big alt" href="{{ url_for('public_request') }}">✚ Send a laser cutting request (no login)</a>
 </form>
+<div class="boardwrap">{% include '_request_board.html' %}</div>
 {% endblock %}

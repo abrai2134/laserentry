@@ -98,3 +98,6 @@ tr.justsaved td { background:#dcfce7; }
 .outform input.outqty { width:72px; margin:0; padding:6px 8px; font-weight:700; }
 @media (max-width:620px) { .outform label:has(.outqty) { width:auto; } }
 .narrowish { max-width:720px; margin:20px auto; }
+.boardwrap { max-width:1100px; margin:0 auto; }
+.board h3 { margin:14px 0 8px; font-size:16px; }
+.narrow .btn.alt { margin-top:10px; }

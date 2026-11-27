@@ -1074,6 +1074,24 @@ def public_request():
                            operators=lists["operators"], last_by=session.get("last_request_by", ""))
 
 
+BOARD_DONE_DAYS = 3
+
+
+def request_board():
+    """Pending requests (oldest first) + requests done in the last 3 days, for the open status list
+    on the login and request pages. None when a PIN is set and not entered on this device."""
+    if not public_allowed():
+        return None
+    since = (now() - timedelta(days=BOARD_DONE_DAYS)).strftime(TS_FMT)
+    pending = request_rows("r.status='pending'")
+    done = sorted(request_rows("r.status='done' AND r.closed_at >= ?", (since,)),
+                  key=lambda r: r["closed_at"], reverse=True)
+    return {"pending": pending, "done": done, "at": now_str()}
+
+
+app.jinja_env.globals["request_board"] = request_board
+
+
 @app.route("/request/party")
 def party_search():
     """Party names matching what is typed (2+ letters, max 15) - the full list is never sent."""

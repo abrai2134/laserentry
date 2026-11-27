@@ -16,4 +16,5 @@
     </form>
   {% endif %}
 </div>
+{% if not need_pin %}<div class="boardwrap">{% include '_request_board.html' %}</div>{% endif %}
 {% endblock %}
