@@ -1,0 +1,19 @@
+{% extends 'base.html' %}
+{% block title %}Laser cutting request{% endblock %}
+{% block body %}
+<div class="card narrowish">
+  <h1>Laser cutting request</h1>
+  {% if need_pin %}
+    <form method="post"><input type="hidden" name="csrf" value="{{ csrf_token }}"><input type="hidden" name="action" value="pin">
+      <label>Enter request PIN <input name="pin" type="password" inputmode="numeric" required autofocus></label>
+      <button class="btn big">Continue</button>
+    </form>
+  {% else %}
+    <p class="muted small">No login needed. Date and time are recorded automatically when you press SAVE, so the first request is first in the queue.</p>
+    <form method="post"><input type="hidden" name="csrf" value="{{ csrf_token }}">
+      {% include '_request_form.html' with context %}
+      <button class="btn big start">SAVE REQUEST</button>
+    </form>
+  {% endif %}
+</div>
+{% endblock %}

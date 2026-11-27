@@ -1,6 +1,6 @@
 {# needs: rows #}
 <div class="tablewrap"><table>
-  <thead><tr><th>#</th><th>Date / time</th><th>Made by</th><th>Party</th><th>Model</th><th class="num">Qty</th><th>Operator</th><th>Status</th><th>Remarks</th><th></th></tr></thead>
+  <thead><tr><th>#</th><th>Date / time</th><th>Request by</th><th>Party</th><th>Model</th><th class="num">Qty</th><th>Operator</th><th>Status</th><th>Remarks</th><th></th></tr></thead>
   <tbody>{% for r in rows %}
     <tr><td class="muted">{{ r.id }}</td><td>{{ r.created_at|dt }}</td><td>{{ r.made_by }}</td><td><b>{{ r.party }}</b></td>
       <td class="code">{{ r.model }}</td><td class="num"><b>{{ r.qty }}</b></td>

@@ -50,6 +50,10 @@ app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
 app.config["MAX_CONTENT_LENGTH"] = 200 * 1024 * 1024     # backup upload limit
 # When hosted online with https, set LASER_HTTPS=1 so the login cookie is only sent over https.
 app.config["SESSION_COOKIE_SECURE"] = os.environ.get("LASER_HTTPS") == "1"
+if os.environ.get("LASER_HTTPS") == "1":
+    # behind Render's proxy: use the real https address and visitor IP
+    from werkzeug.middleware.proxy_fix import ProxyFix
+    app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1)
 
 
 # ---------------------------------------------------------------- database
@@ -128,7 +132,7 @@ CREATE TABLE IF NOT EXISTS settings (
 CREATE TABLE IF NOT EXISTS laser_requests (
     id INTEGER PRIMARY KEY,
     created_at TEXT NOT NULL,          -- server time: shows who asked first
-    user_id INTEGER NOT NULL REFERENCES users(id),   -- who typed the request
+    user_id INTEGER REFERENCES users(id),   -- who typed the request (empty = public request page)
     made_by TEXT NOT NULL,
     party TEXT NOT NULL,
     machine_id INTEGER REFERENCES machines(id),
@@ -218,6 +222,16 @@ def init_db():
     if "loader1" not in [r[1] for r in db.execute("PRAGMA table_info(entries)")]:
         db.execute("ALTER TABLE entries ADD COLUMN loader1 TEXT")
         db.execute("ALTER TABLE entries ADD COLUMN loader2 TEXT")
+    # requests may now come from the public page without a login: user_id must allow empty
+    if any(r[1] == "user_id" and r[3] for r in db.execute("PRAGMA table_info(laser_requests)")):
+        cols = ", ".join(r[1] for r in db.execute("PRAGMA table_info(laser_requests)"))
+        sql = db.execute("SELECT sql FROM sqlite_master WHERE name='laser_requests'").fetchone()[0]
+        db.execute("ALTER TABLE laser_requests RENAME TO laser_requests_old")
+        db.execute(sql.replace("user_id INTEGER NOT NULL REFERENCES users(id)", "user_id INTEGER REFERENCES users(id)"))
+        db.execute(f"INSERT INTO laser_requests({cols}) SELECT {cols} FROM laser_requests_old")
+        db.execute("DROP TABLE laser_requests_old")
+    if "requester_ip" not in [r[1] for r in db.execute("PRAGMA table_info(laser_requests)")]:
+        db.execute("ALTER TABLE laser_requests ADD COLUMN requester_ip TEXT")
     # split OUT lines remember the lot (original line) they came from
     if "lot_id" not in [r[1] for r in db.execute("PRAGMA table_info(bending)")]:
         db.execute("ALTER TABLE bending ADD COLUMN lot_id INTEGER")
@@ -977,9 +991,101 @@ def request_lists():
 def request_rows(where="1=1", params=()):
     return get_db().execute(
         "SELECT r.*, us.full_name AS requested_by, op.full_name AS operator_name, un.name AS unit_name, "
-        "cl.full_name AS closed_by_name FROM laser_requests r JOIN users us ON us.id=r.user_id "
+        "cl.full_name AS closed_by_name FROM laser_requests r LEFT JOIN users us ON us.id=r.user_id "
         "LEFT JOIN users op ON op.id=r.operator_id LEFT JOIN units un ON un.id=op.unit_id "
         f"LEFT JOIN users cl ON cl.id=r.closed_by WHERE {where} ORDER BY r.created_at, r.id", params).fetchall()
+
+
+def save_request(f, lists, user_id, ip=None):
+    """Validate and save one request (used by the staff page and the public page). Returns new id or None."""
+    db = get_db()
+    made_by = " ".join(f.get("made_by", "").split()).upper()
+    party = " ".join(f.get("party", "").split()).upper()
+    machine = next((m for m in lists["models"] if str(m["id"]) == f.get("machine_id")), None)
+    operator = next((o for o in lists["operators"] if str(o["id"]) == f.get("operator_id")), None)
+    try:
+        qty = int(f.get("qty") or "")
+    except ValueError:
+        qty = 0
+    for ok, text in ((made_by, "Select Request By."), (party, "Select the party."), (machine, "Select the model."),
+                     (qty >= 1, "Enter quantity (1 or more)."), (operator, "Select the operator.")):
+        if not ok:
+            flash(text, "error")
+            return None
+    db.execute("BEGIN IMMEDIATE")
+    if db.execute("SELECT 1 FROM laser_requests WHERE made_by=? AND party=? AND machine_id=? AND qty=? "
+                  "AND operator_id=? AND (julianday(?)-julianday(created_at))*86400 < 20",
+                  (made_by, party, machine["id"], qty, operator["id"], now_str())).fetchone():
+        db.rollback()
+        flash("This request was just saved. Not saved again.", "error")
+        return None
+    cur = db.execute("INSERT INTO laser_requests(created_at, user_id, made_by, party, machine_id, model, qty, "
+                     "operator_id, remarks, requester_ip) VALUES (?,?,?,?,?,?,?,?,?,?)",
+                     (now_str(), user_id, made_by, party, machine["id"], machine["name"], qty,
+                      operator["id"], f.get("remarks", "").strip()[:300], ip))
+    db.commit()
+    pos = db.execute("SELECT COUNT(*) FROM laser_requests WHERE status='pending' AND operator_id=? AND id<=?",
+                     (operator["id"], cur.lastrowid)).fetchone()[0]
+    flash(f"Request #{cur.lastrowid} saved: {party} - {machine['name']} x {qty} for "
+          f"{operator['full_name']}. Position in the queue: {pos}.", "ok")
+    return cur.lastrowid
+
+
+# public page: limits so the open link cannot be misused
+PUBLIC_MAX_PER_HOUR = 30
+_public_hits = {}
+
+
+def public_allowed():
+    """Logged-in users always; otherwise the PIN (if admin set one) must have been entered."""
+    if current_user():
+        return True
+    pin = get_setting("request_pin")
+    return not pin or session.get("request_pin_ok") == pin
+
+
+@app.route("/request", methods=["GET", "POST"])
+def public_request():
+    """Request form that works without a login. Admin can protect it with a PIN in Setup."""
+    pin = get_setting("request_pin")
+    if request.method == "POST" and request.form.get("action") == "pin":
+        if request.form.get("pin", "").strip() == pin:
+            session["request_pin_ok"] = pin
+        else:
+            flash("Wrong PIN.", "error")
+        return redirect(url_for("public_request"))
+    if not public_allowed():
+        return render_template("request_public.html", need_pin=True)
+    lists = request_lists()
+    if request.method == "POST":
+        ip = (request.headers.get("X-Forwarded-For") or request.remote_addr or "").split(",")[0].strip()
+        hour_ago = now() - timedelta(hours=1)
+        hits = [t for t in _public_hits.get(ip, []) if t > hour_ago]
+        if len(hits) >= PUBLIC_MAX_PER_HOUR and not current_user():
+            flash("Too many requests from this device in the last hour. Please try later.", "error")
+        else:
+            rid = save_request(request.form, lists, current_user()["id"] if current_user() else None, ip)
+            if rid:
+                hits.append(now())
+                session["last_request_by"] = " ".join(request.form.get("made_by", "").split()).upper()
+        _public_hits[ip] = hits
+        return redirect(url_for("public_request"))
+    return render_template("request_public.html", need_pin=False, made_by=lists["made_by"], models=lists["models"],
+                           operators=lists["operators"], last_by=session.get("last_request_by", ""))
+
+
+@app.route("/request/party")
+def party_search():
+    """Party names matching what is typed (2+ letters, max 15) - the full list is never sent."""
+    if not public_allowed():
+        abort(403)
+    q = " ".join(request.args.get("q", "").split()).upper()
+    if len(q) < 2:
+        return {"parties": []}
+    parties = request_lists()["parties"]
+    starts = [p for p in parties if p.startswith(q)]
+    contains = [p for p in parties if q in p and not p.startswith(q)]
+    return {"parties": (starts + contains)[:15]}
 
 
 @app.route("/requests", methods=["GET", "POST"])
@@ -1005,42 +1111,7 @@ def requests_page():
                 db.commit()
                 flash(f"Request #{r['id']} ({r['party']} - {r['model']} x {r['qty']}) marked {st}.", "ok")
             return redirect(request.referrer or url_for("requests_page"))
-        made_by = " ".join(f.get("made_by", "").split()).upper()
-        party = " ".join(f.get("party", "").split()).upper()
-        machine = next((m for m in lists["models"] if str(m["id"]) == f.get("machine_id")), None)
-        operator = next((o for o in lists["operators"] if str(o["id"]) == f.get("operator_id")), None)
-        try:
-            qty = int(f.get("qty") or "")
-        except ValueError:
-            qty = 0
-        if not made_by:
-            flash("Select Made by.", "error")
-        elif not party:
-            flash("Select the party.", "error")
-        elif not machine:
-            flash("Select the model.", "error")
-        elif qty < 1:
-            flash("Enter quantity (1 or more).", "error")
-        elif not operator:
-            flash("Select the operator.", "error")
-        else:
-            db.execute("BEGIN IMMEDIATE")
-            if db.execute("SELECT 1 FROM laser_requests WHERE user_id=? AND party=? AND machine_id=? AND qty=? "
-                          "AND operator_id=? AND (julianday(?)-julianday(created_at))*86400 < 20",
-                          (me["id"], party, machine["id"], qty, operator["id"], now_str())).fetchone():
-                db.rollback()
-                flash("This request was just saved. Not saved again.", "error")
-            else:
-                cur = db.execute("INSERT INTO laser_requests(created_at, user_id, made_by, party, machine_id, model, qty, "
-                                 "operator_id, remarks) VALUES (?,?,?,?,?,?,?,?,?)",
-                                 (now_str(), me["id"], made_by, party, machine["id"], machine["name"], qty,
-                                  operator["id"], f.get("remarks", "").strip()))
-                db.commit()
-                pos = db.execute("SELECT COUNT(*) FROM laser_requests WHERE status='pending' AND operator_id=? "
-                                 "AND (created_at < (SELECT created_at FROM laser_requests WHERE id=?) OR id<=?)",
-                                 (operator["id"], cur.lastrowid, cur.lastrowid)).fetchone()[0]
-                flash(f"Request #{cur.lastrowid} saved: {party} - {machine['name']} x {qty} for "
-                      f"{operator['full_name']}. Position in his queue: {pos}.", "ok")
+        save_request(f, lists, me["id"])
         return redirect(url_for("requests_page"))
 
     status = request.args.get("status", "pending")
@@ -1070,12 +1141,12 @@ def requests_page():
 def requests_csv():
     out = io.StringIO()
     w = csv.writer(out)
-    w.writerow(["Request no", "Date / time", "Made by", "Party", "Model", "Qty", "Operator", "Unit", "Status",
+    w.writerow(["Request no", "Date / time", "Request by", "Party", "Model", "Qty", "Operator", "Unit", "Status",
                 "Closed at", "Closed by", "Entered by", "Remarks"])
     for r in request_rows():
         w.writerow([r["id"], r["created_at"], r["made_by"], r["party"], r["model"], r["qty"], r["operator_name"] or "",
                     r["unit_name"] or "", r["status"], r["closed_at"] or "", r["closed_by_name"] or "",
-                    r["requested_by"], r["remarks"] or ""])
+                    r["requested_by"] or "Request page (no login)", r["remarks"] or ""])
     return Response("\ufeff" + out.getvalue(), mimetype="text/csv",
                     headers={"Content-Disposition": f"attachment; filename=laser_requests_{now().strftime('%Y%m%d_%H%M')}.csv"})
 
@@ -1984,12 +2055,13 @@ def admin():
                     set_setting("sheet_url", link)
                     set_setting("sheet_madeby_col", f.get("madeby_col", "").strip() or "Made By")
                     set_setting("sheet_party_col", f.get("party_col", "").strip() or "PARTY")
+                    set_setting("request_pin", f.get("request_pin", "").strip())
                     db.commit()
                     d = fetch_sheet_lists(force=True)
                     if d["error"]:
                         flash(d["error"], "error")
                     else:
-                        flash(f"Google Sheet read: {len(d['made_by'])} 'Made by' names and {len(d['party'])} parties.", "ok")
+                        flash(f"Google Sheet read: {len(d['made_by'])} 'Request by' names and {len(d['party'])} parties.", "ok")
             elif action == "set_user_unit":
                 db.execute("UPDATE users SET unit_id=? WHERE id=?", (f.get("unit_id") or None, f["id"]))
                 flash("Unit updated.", "ok")
@@ -2004,7 +2076,8 @@ def admin():
                        "ON un.id=us.unit_id ORDER BY us.role, us.full_name").fetchall()
     return render_template("admin.html", units=units, machines=machines, users=users,
                            sheet_url=get_setting("sheet_url"), madeby_col=get_setting("sheet_madeby_col", "Made By"),
-                           party_col=get_setting("sheet_party_col", "PARTY"))
+                           party_col=get_setting("sheet_party_col", "PARTY"), request_pin=get_setting("request_pin"),
+                           public_link=url_for("public_request", _external=True))
 
 
 # ---------------------------------------------------------------- backup / restore

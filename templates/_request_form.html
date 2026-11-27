@@ -1,0 +1,38 @@
+{# needs: made_by, models, operators; optional last_by #}
+<div class="grid2 tight">
+  <label>Request By
+    <input name="made_by" list="madeby" required autocomplete="off" autocapitalize="characters" value="{{ last_by or '' }}" placeholder="Pick your name"></label>
+  <label>Party
+    <input name="party" id="partyBox" list="parties" required autocomplete="off" autocapitalize="characters" placeholder="Type 2+ letters of party name"></label>
+</div>
+<datalist id="madeby">{% for n in made_by %}<option value="{{ n }}">{% endfor %}</datalist>
+<datalist id="parties"></datalist>
+<div class="grid2 tight">
+  <label>Model
+    <select name="machine_id" required><option value="">-- select model --</option>
+      {% for m in models %}<option value="{{ m.id }}">{{ m.name }}</option>{% endfor %}</select></label>
+  <label>Qty <input name="qty" type="number" min="1" inputmode="numeric" required></label>
+</div>
+<label>Name of operator
+  <select name="operator_id" required><option value="">-- select operator --</option>
+    {% for o in operators %}<option value="{{ o.id }}">{{ o.full_name }}{% if o.unit_name %} ({{ o.unit_name }}){% endif %}</option>{% endfor %}</select></label>
+<label>Remarks (optional) <input name="remarks" maxlength="300"></label>
+<script>
+  (function () {
+    const box = document.getElementById('partyBox'), list = document.getElementById('parties');
+    let timer = null, last = '';
+    box.addEventListener('input', function () {
+      clearTimeout(timer);
+      timer = setTimeout(async function () {
+        const q = box.value.trim();
+        if (q.length < 2 || q === last) return;
+        last = q;
+        try {
+          const data = await (await fetch('{{ url_for("party_search") }}?q=' + encodeURIComponent(q))).json();
+          list.innerHTML = '';
+          data.parties.forEach(function (p) { const o = document.createElement('option'); o.value = p; list.appendChild(o); });
+        } catch (e) {}
+      }, 250);
+    });
+  })();
+</script>

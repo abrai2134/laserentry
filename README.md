@@ -49,13 +49,15 @@ Only finished sheets are counted. Operators see their own summary only.
 
 ## Laser cutting requests
 
-Menu **Requests**: Made by, Party, Model, Qty, Name of operator (+ remarks). Date and time are
-recorded automatically, so requests are listed first-come-first. **Made by** and **Party**
-come from a Google Sheet: admin pastes its link in **Setup** (sheet shared as "Anyone with the
-link - Viewer"; column headings "Made By" and "PARTY" by default; read every 10 minutes; the
-last good copy is used if Google cannot be reached). **Model** = machine list, **operator** =
-operator logins. Each operator sees their pending requests on their home page and presses
-**Done**. Pending / Done / Cancelled tabs, filters and Excel download.
+Public page **/request** (no login): Request By, Party, Model, Qty, Name of operator (+ remarks).
+Date and time are recorded automatically, so requests are listed first-come-first. Staff can
+also use menu **Requests** (with Pending / Done / Cancelled tabs, filters and Excel download).
+**Request By** and **Party** come from a Google Sheet ("Made By" and "PARTY" columns by default):
+admin pastes its link in **Setup** (sheet shared as "Anyone with the link - Viewer"; read every
+10 minutes; last good copy used if Google cannot be reached). Party names are only suggested
+after typing 2+ letters (the full list is never sent). Admin can set a **request PIN** for the
+public page; max 30 requests per hour per device. Operators see their pending requests on their
+home page and press **Done**.
 
 ## Loaders
 

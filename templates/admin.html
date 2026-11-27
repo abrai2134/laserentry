@@ -41,14 +41,17 @@
 </div>
 
 <form class="card" method="post">{{ csrf() }}<input type="hidden" name="action" value="sheet_settings">
-  <h2>Google Sheet for requests (Made by / Party)</h2>
+  <h2>Laser cutting requests: Google Sheet + public link</h2>
   <p class="muted small">Paste the link of the sheet that has the <b>Made By</b> and <b>PARTY</b> columns. The sheet must be shared as
     <b>Anyone with the link - Viewer</b>. Names are read again every 10 minutes. The link is kept only in this app's database.</p>
   <label>Google Sheet link <input name="sheet_url" value="{{ sheet_url }}" placeholder="https://docs.google.com/spreadsheets/d/..."></label>
   <div class="grid2 tight">
-    <label>"Made by" column heading <input name="madeby_col" value="{{ madeby_col }}"></label>
-    <label>"Party" column heading <input name="party_col" value="{{ party_col }}"></label>
+    <label>"Request By" names: column heading in the sheet <input name="madeby_col" value="{{ madeby_col }}"></label>
+    <label>"Party" column heading in the sheet <input name="party_col" value="{{ party_col }}"></label>
   </div>
+  <p>Request page for everyone (no login): <a href="{{ public_link }}" target="_blank"><b>{{ public_link }}</b></a></p>
+  <label>Request PIN (optional) <input name="request_pin" value="{{ request_pin }}" placeholder="leave empty = no PIN" inputmode="numeric"></label>
+  <p class="muted small">If you set a PIN, people must enter it once on the request page. Recommended, because the page is open on the internet.</p>
   <button class="btn">Save &amp; test</button>
 </form>
 
