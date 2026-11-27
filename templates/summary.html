@@ -73,6 +73,21 @@
 </div>
 {% endif %}
 
+<h2>Machine-wise with lot size ({{ s.label }})</h2>
+<div class="tablewrap"><table class="pivot">
+  <thead><tr>{% if me.role == 'admin' %}<th>Unit</th>{% endif %}<th>Machine</th><th class="num">Lot size</th><th class="num">Laser sheets</th><th class="num">Laser qty</th><th class="num tot">Laser lots</th><th class="num">Bending out qty</th><th class="num tot">Bending lots</th></tr></thead>
+  <tbody>{% for d in mlots %}
+    <tr>{% if me.role == 'admin' %}<td>{{ d.unit }}</td>{% endif %}<td class="code">{{ d.machine }}</td>
+      <td class="num">{{ d.lot or '-' }}</td><td class="num">{{ d.sheets or '-' }}</td><td class="num">{{ d.qty or '-' }}</td>
+      <td class="num tot">{{ d.lots if d.lots is not none else '-' }}</td>
+      <td class="num">{{ d.bend_out or '-' }}</td><td class="num tot">{{ d.bend_lots if d.bend_lots is not none else '-' }}</td></tr>
+  {% else %}<tr><td colspan="8" class="muted">No laser or bending work in this period.</td></tr>{% endfor %}</tbody>
+  {% if mlots %}<tfoot><tr>{% if me.role == 'admin' %}<th></th>{% endif %}<th>TOTAL</th><th></th>
+    <th class="num">{{ mlots|sum(attribute='sheets') }}</th><th class="num">{{ mlots|sum(attribute='qty') }}</th><th></th>
+    <th class="num">{{ mlots|sum(attribute='bend_out') }}</th><th></th></tr></tfoot>{% endif %}
+</table></div>
+<p class="muted small">Lots = qty ÷ lot size of the machine (set on Masters). "-" = no lot size set for that machine.</p>
+
 <h2>Loaders ({{ s.label }})</h2>
 {% include '_loaders.html' with context %}
 

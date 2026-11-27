@@ -1471,9 +1471,37 @@ def build_summary(args, me):
         else:
             groups.append([m, 1])
     return dict(period=period, date=day.isoformat(), label=label, start=start, end=end, groups=groups,
+                where=where, params=params,
                 prev_day=prev_day.isoformat(), next_day=next_day.isoformat(),
                 columns=columns, operators=operators, col_totals=col_totals, grand=grand,
                 daily=daily, days=days, op_ids=op_ids, ops=ops)
+
+
+def machine_lots(s, b):
+    """Per machine in the period: lot size, laser sheets / qty / lots, bending out qty / lots."""
+    db = get_db()
+    rows = {}
+
+    def row(mid, name, unit, lot):
+        return rows.setdefault(mid, {"machine": name or "-", "unit": unit or "", "lot": lot, "sheets": 0, "qty": 0,
+                                     "bend_out": 0})
+    for r in db.execute("SELECT e.machine_id, m.name, m.lot_size, un.name AS unit_name, COUNT(*) AS sheets, "
+                        "SUM(e.qty) AS qty FROM entries e JOIN machines m ON m.id=e.machine_id "
+                        f"JOIN units un ON un.id=e.unit_id WHERE {s['where']} GROUP BY e.machine_id", s["params"]):
+        d = row(r["machine_id"], r["name"], r["unit_name"], r["lot_size"])
+        d["sheets"], d["qty"] = r["sheets"], r["qty"] or 0
+    lots = {m["id"]: m for m in db.execute("SELECT m.*, u.name AS unit_name FROM machines m JOIN units u ON u.id=m.unit_id")}
+    for r in b["out_list"]:
+        if r["kind"] == "direct" or not r.get("machine_id"):
+            continue
+        m = lots.get(r["machine_id"])
+        d = row(r["machine_id"], m["name"] if m else r["machine_name"], m["unit_name"] if m else r["unit_name"],
+                m["lot_size"] if m else None)
+        d["bend_out"] += r["qty"]
+    for d in rows.values():
+        d["lots"] = round(d["qty"] / d["lot"], 1) if d["lot"] else None
+        d["bend_lots"] = round(d["bend_out"] / d["lot"], 1) if d["lot"] else None
+    return sorted(rows.values(), key=lambda d: (d["unit"], d["machine"]))
 
 
 @app.route("/summary")
@@ -1493,6 +1521,7 @@ def summary():
     unit_scope = int(request.args["unit"]) if (me["role"] == "admin" and request.args.get("unit")) else None
     lscope = unit_scope if me["role"] == "admin" else me["unit_id"]
     return render_template("summary.html", s=data, args=request.args, machines=machines, b=bend,
+                           mlots=machine_lots(data, bend),
                            loader_rows=loader_counts(data["start"], data["end"], lscope, request.args.get("machine")),
                            waiting=bending_waiting(me, unit_scope),
                            units=db.execute("SELECT * FROM units ORDER BY name").fetchall(),
@@ -1534,6 +1563,14 @@ def summary_csv():
     w.writerow([])
     me = current_user()
     lscope = (request.args.get("unit") or None) if me["role"] == "admin" else me["unit_id"]
+    w.writerow([])
+    w.writerow(["Machine-wise (lot size)"])
+    w.writerow(["Unit", "Machine", "Lot size", "Laser sheets", "Laser qty", "Laser lots", "Bending out qty",
+                "Bending lots"])
+    for d in machine_lots(s, b):
+        w.writerow([d["unit"], d["machine"], d["lot"] or "", d["sheets"], d["qty"],
+                    d["lots"] if d["lots"] is not None else "", d["bend_out"],
+                    d["bend_lots"] if d["bend_lots"] is not None else ""])
     w.writerow([])
     w.writerow(["Loaders - sheets unloaded"])
     w.writerow(["Loader", "Unit", "Sheets"])
