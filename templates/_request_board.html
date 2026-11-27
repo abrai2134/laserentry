@@ -5,12 +5,12 @@
   <p class="muted small">Updated {{ board.at|dt }} · refresh the page to see the latest.</p>
   <h3>⏳ Pending ({{ board.pending|length }}) - first come first</h3>
   <div class="tablewrap"><table>
-    <thead><tr><th>#</th><th>Requested</th><th>Request by</th><th>Party</th><th>Model</th><th class="num">Qty</th><th>Operator</th><th>Waiting</th></tr></thead>
+    <thead><tr><th>#</th><th>Requested</th><th>Request by</th><th>Party</th><th>Model</th><th class="num">Qty</th><th>Lots to cut</th><th>Operator</th><th>Waiting</th></tr></thead>
     <tbody>{% for r in board.pending %}
       <tr><td class="muted">{{ loop.index }}</td><td>{{ r.created_at|dt }}</td><td>{{ r.made_by }}</td><td><b>{{ r.party }}</b></td>
-        <td class="code">{{ r.model }}</td><td class="num"><b>{{ r.qty }}</b></td><td>{{ r.operator_name or '-' }}</td>
+        <td class="code">{{ r.model }}</td><td class="num"><b>{{ r.qty }}</b></td><td>{% include '_lots.html' %}</td><td>{{ r.operator_name or '-' }}</td>
         <td><span class="tag run">pending {{ fmt_minutes(minutes_between(r.created_at, now_str())) }}</span></td></tr>
-    {% else %}<tr><td colspan="8" class="muted">No pending requests.</td></tr>{% endfor %}</tbody>
+    {% else %}<tr><td colspan="9" class="muted">No pending requests.</td></tr>{% endfor %}</tbody>
   </table></div>
   <h3>✔ Completed (last 3 days, {{ board.done|length }})</h3>
   <div class="tablewrap"><table>

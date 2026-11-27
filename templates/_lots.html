@@ -1,0 +1,1 @@
+{% set n = lots_needed(r.qty, r.lot_size) %}{% if n %}<span class="lots">✂ Cut {{ n }} lot{{ 's' if n > 1 }}</span> <span class="muted small">(lot {{ r.lot_size }})</span>{% endif %}

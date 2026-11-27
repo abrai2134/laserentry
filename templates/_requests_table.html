@@ -7,7 +7,7 @@
       <td>{{ r.operator_name or '-' }}{% if r.unit_name %} <span class="muted small">({{ r.unit_name }})</span>{% endif %}</td>
       <td>{% if r.status == 'pending' %}<span class="tag run">pending {{ fmt_minutes(minutes_between(r.created_at, now_str())) }}</span>
           {% elif r.status == 'done' %}<span class="tag ok">done {{ r.closed_at|dt }}</span>{% else %}<span class="tag late">cancelled</span>{% endif %}</td>
-      <td style="white-space:normal">{{ r.remarks or '' }}</td>
+      <td style="white-space:normal">{% include '_lots.html' %}{% if r.remarks %}<div>{{ r.remarks }}</div>{% endif %}</td>
       <td>{% if me.role == 'admin' or r.operator_id == me.id or r.user_id == me.id %}
         <form method="post" action="{{ url_for('requests_page') }}" class="inline">
           <input type="hidden" name="csrf" value="{{ csrf_token }}"><input type="hidden" name="id" value="{{ r.id }}">

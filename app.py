@@ -1032,11 +1032,23 @@ def request_lists():
                              "WHERE us.active=1 AND us.role='operator' ORDER BY us.full_name").fetchall())
 
 
+def lots_needed(qty, lot):
+    """Whole lots to cut for a qty: 12 of lot 24 -> 1, 30 -> 2, 48 -> 2 (always rounded up)."""
+    if not lot or not qty or lot <= 0:
+        return None
+    return -(-qty // lot)
+
+
+app.jinja_env.globals["lots_needed"] = lots_needed
+
+
 def request_rows(where="1=1", params=()):
     return get_db().execute(
         "SELECT r.*, us.full_name AS requested_by, op.full_name AS operator_name, un.name AS unit_name, "
+        "mc.lot_size AS lot_size, "
         "cl.full_name AS closed_by_name FROM laser_requests r LEFT JOIN users us ON us.id=r.user_id "
         "LEFT JOIN users op ON op.id=r.operator_id LEFT JOIN units un ON un.id=op.unit_id "
+        "LEFT JOIN machines mc ON mc.id=r.machine_id "
         f"LEFT JOIN users cl ON cl.id=r.closed_by WHERE {where} ORDER BY r.created_at, r.id", params).fetchall()
 
 
@@ -1070,8 +1082,10 @@ def save_request(f, lists, user_id, ip=None):
     db.commit()
     pos = db.execute("SELECT COUNT(*) FROM laser_requests WHERE status='pending' AND operator_id=? AND id<=?",
                      (operator["id"], cur.lastrowid)).fetchone()[0]
+    n = lots_needed(qty, machine["lot_size"])
     flash(f"Request #{cur.lastrowid} saved: {party} - {machine['name']} x {qty} for "
-          f"{operator['full_name']}. Position in the queue: {pos}.", "ok")
+          f"{operator['full_name']}" + (f" (cut {n} lot{'s' if n > 1 else ''} of {machine['lot_size']})" if n else "")
+          + f". Position in the queue: {pos}.", "ok")
     return cur.lastrowid
 
 
@@ -1203,10 +1217,12 @@ def requests_page():
 def requests_csv():
     out = io.StringIO()
     w = csv.writer(out)
-    w.writerow(["Request no", "Date / time", "Request by", "Party", "Model", "Qty", "Operator", "Unit", "Status",
+    w.writerow(["Request no", "Date / time", "Request by", "Party", "Model", "Qty", "Lot size", "Lots to cut",
+                "Operator", "Unit", "Status",
                 "Closed at", "Closed by", "Entered by", "Remarks"])
     for r in request_rows():
-        w.writerow([r["id"], r["created_at"], r["made_by"], r["party"], r["model"], r["qty"], r["operator_name"] or "",
+        w.writerow([r["id"], r["created_at"], r["made_by"], r["party"], r["model"], r["qty"], r["lot_size"] or "",
+                    lots_needed(r["qty"], r["lot_size"]) or "", r["operator_name"] or "",
                     r["unit_name"] or "", r["status"], r["closed_at"] or "", r["closed_by_name"] or "",
                     r["requested_by"] or "Request page (no login)", r["remarks"] or ""])
     return Response("\ufeff" + out.getvalue(), mimetype="text/csv",
